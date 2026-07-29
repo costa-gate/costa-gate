@@ -2,8 +2,8 @@ import Link from 'next/link';
 
 const items = [
   { label: 'Nova Entrada', href: '/nova-entrada' },
-  { label: 'Veículos na Unidade', href: '#' },
-  { label: 'Consulta', href: '#' },
+  { label: 'Veículos na Unidade', href: '/veiculos-na-unidade' },
+  { label: 'Consulta', href: '/consulta' },
   { label: 'Painel', href: '#' },
   { label: 'Usuários', href: '#' },
   { label: 'Configurações', href: '#' },

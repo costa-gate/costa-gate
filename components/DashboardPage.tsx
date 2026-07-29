@@ -35,7 +35,21 @@ export function DashboardPage() {
 
             <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               {modules.map((module) => (
-                <ModuleCard key={module.title} title={module.title} description={module.description} icon={module.icon} href={module.title === 'Nova Entrada' ? '/nova-entrada' : '#'} />
+                <ModuleCard
+                  key={module.title}
+                  title={module.title}
+                  description={module.description}
+                  icon={module.icon}
+                  href={
+                    module.title === 'Nova Entrada'
+                      ? '/nova-entrada'
+                      : module.title === 'Veículos na Unidade'
+                      ? '/veiculos-na-unidade'
+                      : module.title === 'Consulta'
+                      ? '/consulta'
+                      : '#'
+                  }
+                />
               ))}
             </div>
           </section>
