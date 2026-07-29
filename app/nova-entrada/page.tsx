@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { FormEvent, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { createMovement } from '@/lib/movements';
+import { useRouter } from 'next/navigation';
 
 const unidadeOptions = ['JAV 1', 'JAV 2'];
 const tipoContainerOptions = ['20DC', '40DC', '40HC', 'Outro'];
@@ -52,6 +54,7 @@ export default function NovaEntradaPage() {
   const [values, setValues] = useState<FormValues>(initialValues);
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
   const [successMessage, setSuccessMessage] = useState('');
+  const router = useRouter();
 
   const handleChange = (field: keyof FormValues, value: string | File | null) => {
     setValues((current) => ({ ...current, [field]: value }));
@@ -89,7 +92,37 @@ export default function NovaEntradaPage() {
     }
 
     setErrors({});
+    // persist in localStorage
+    const fotos = {
+      fotoVeiculo: values.fotoVeiculo ? values.fotoVeiculo.name : null,
+      fotoContainer: values.fotoContainer ? values.fotoContainer.name : null,
+      fotoDocumento: values.fotoDocumento ? values.fotoDocumento.name : null,
+    };
+
+    createMovement({
+      unidade: values.unidade,
+      placaCavalo: values.placaCavalo,
+      placaCarreta: values.placaCarreta,
+      motorista: values.motorista,
+      telefone: values.telefone,
+      transportadora: values.transportadora,
+      cliente: values.cliente,
+      numeroContainer: values.numeroContainer,
+      lacre: values.lacre,
+      armador: values.armador,
+      tipoContainer: values.tipoContainer,
+      condicao: values.condicao,
+      operacao: values.operacao,
+      observacoes: values.observacoes,
+      fotos,
+    });
+
     setSuccessMessage('Entrada registrada com sucesso');
+    setValues(initialValues);
+    // redirect to vehicles list after small delay to show success
+    setTimeout(() => {
+      router.push('/veiculos-na-unidade');
+    }, 600);
   };
 
   const handleFileChange = (field: 'fotoVeiculo' | 'fotoContainer' | 'fotoDocumento', file: File | null) => {

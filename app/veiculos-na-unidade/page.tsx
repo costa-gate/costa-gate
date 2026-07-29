@@ -1,99 +1,24 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import Link from 'next/link';
-
-type Vehicle = {
-  id: string;
-  placaCavalo: string;
-  placaCarreta: string;
-  motorista: string;
-  cliente: string;
-  container: string;
-  operacao: string;
-  unidade: 'JAV 1' | 'JAV 2';
-  entrada: string; // ISO datetime
-  permanencia: string;
-  status: 'Na Portaria' | 'Em Operação' | 'Aguardando Saída' | 'Finalizada';
-};
-
-const FAKE_DATA: Vehicle[] = [
-  {
-    id: '1',
-    placaCavalo: 'ABC1D23',
-    placaCarreta: 'XYZ9E87',
-    motorista: 'João Silva',
-    cliente: 'GrainCorp',
-    container: 'CONT1234567',
-    operacao: 'Descarregamento',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T08:15:00Z',
-    permanencia: '2h 15m',
-    status: 'Na Portaria',
-  },
-  {
-    id: '2',
-    placaCavalo: 'DEF2G45',
-    placaCarreta: 'LMN1O23',
-    motorista: 'Maria Pereira',
-    cliente: 'OceanExport',
-    container: 'CONT2345678',
-    operacao: 'Carregamento',
-    unidade: 'JAV 2',
-    entrada: '2026-07-29T06:40:00Z',
-    permanencia: '3h 50m',
-    status: 'Em Operação',
-  },
-  {
-    id: '3',
-    placaCavalo: 'GHI3J67',
-    placaCarreta: 'OPQ4R56',
-    motorista: 'Carlos Eduardo',
-    cliente: 'LogiTrans',
-    container: 'CONT3456789',
-    operacao: 'Inspeção',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T09:30:00Z',
-    permanencia: '1h 0m',
-    status: 'Aguardando Saída',
-  },
-  {
-    id: '4',
-    placaCavalo: 'JKL4K89',
-    placaCarreta: 'STU7V89',
-    motorista: 'Fernanda Lima',
-    cliente: 'ContainerCo',
-    container: 'CONT4567890',
-    operacao: 'Pesagem',
-    unidade: 'JAV 2',
-    entrada: '2026-07-29T05:20:00Z',
-    permanencia: '4h 25m',
-    status: 'Em Operação',
-  },
-  {
-    id: '5',
-    placaCavalo: 'MNO5L01',
-    placaCarreta: 'VWX8Y01',
-    motorista: 'Rafael Costa',
-    cliente: 'AgroLine',
-    container: 'CONT5678901',
-    operacao: 'Aguardando liberação',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T07:10:00Z',
-    permanencia: '2h 55m',
-    status: 'Na Portaria',
-  },
-];
+import { formatPermanencia, getActiveMovements, finalizeMovement } from '@/lib/movements';
+import type { VehicleMovement } from '@/types';
 
 export default function VeiculosNaUnidadePage() {
   const [query, setQuery] = useState('');
   const [filtroUnidade, setFiltroUnidade] = useState<'Todas' | 'JAV 1' | 'JAV 2'>('Todas');
-  const [filtroStatus, setFiltroStatus] = useState<'Todos' | 'Na Portaria' | 'Em Operação' | 'Aguardando Saída'>('Todos');
-  const [data, setData] = useState<Vehicle[]>(FAKE_DATA);
+  const [filtroStatus, setFiltroStatus] = useState<'Todos' | 'Na Portaria' | 'Em Operação' | 'Aguardando Saída' | 'Finalizado'>('Todos');
+  const [data, setData] = useState<VehicleMovement[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
-  const [selected, setSelected] = useState<Vehicle | null>(null);
+  const [selected, setSelected] = useState<VehicleMovement | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    const loaded = getActiveMovements();
+    setData(loaded);
+  }, []);
 
   const filtered = useMemo(() => {
     return data.filter((v) => {
@@ -106,24 +31,27 @@ export default function VeiculosNaUnidadePage() {
         v.placaCarreta.toLowerCase().includes(q) ||
         v.motorista.toLowerCase().includes(q) ||
         v.cliente.toLowerCase().includes(q) ||
-        v.container.toLowerCase().includes(q)
+        v.numeroContainer.toLowerCase().includes(q)
       );
     });
   }, [data, query, filtroUnidade, filtroStatus]);
 
-  const openModal = (vehicle: Vehicle) => {
+  const openModal = (vehicle: VehicleMovement) => {
     setSelected(vehicle);
     setModalOpen(true);
     setSuccessMessage('');
   };
 
   const confirmSaida = () => {
+    if (!selected) return;
+    const updated = finalizeMovement(selected.id);
     setModalOpen(false);
     setSuccessMessage('Saída finalizada com sucesso');
-    if (selected) {
-      setData((prev) => prev.map((p) => (p.id === selected.id ? { ...p, status: 'Finalizada' } : p)));
-    }
+    // remove from active list
+    setData((prev) => prev.filter((p) => p.id !== selected.id));
   };
+
+  const formatDuration = (iso: string) => formatPermanencia(iso, undefined);
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_24%),#020617]">
@@ -175,6 +103,7 @@ export default function VeiculosNaUnidadePage() {
                   <option>Na Portaria</option>
                   <option>Em Operação</option>
                   <option>Aguardando Saída</option>
+                  <option>Finalizado</option>
                 </select>
               </div>
             </div>
@@ -209,11 +138,11 @@ export default function VeiculosNaUnidadePage() {
                         <td className="px-4 py-3">{v.placaCarreta}</td>
                         <td className="px-4 py-3">{v.motorista}</td>
                         <td className="px-4 py-3">{v.cliente}</td>
-                        <td className="px-4 py-3">{v.container}</td>
+                        <td className="px-4 py-3">{v.numeroContainer}</td>
                         <td className="px-4 py-3">{v.operacao}</td>
                         <td className="px-4 py-3">{v.unidade}</td>
                         <td className="px-4 py-3">{new Date(v.entrada).toLocaleString()}</td>
-                        <td className="px-4 py-3">{v.permanencia}</td>
+                        <td className="px-4 py-3">{formatDuration(v.entrada)}</td>
                         <td className="px-4 py-3">{v.status}</td>
                         <td className="px-4 py-3">
                           <button
@@ -238,8 +167,8 @@ export default function VeiculosNaUnidadePage() {
                         <p className="text-sm text-slate-400">{v.unidade} • {v.status}</p>
                         <h3 className="mt-1 text-lg font-semibold text-slate-50">{v.placaCavalo} / {v.placaCarreta}</h3>
                         <p className="mt-1 text-sm text-slate-400">{v.motorista} · {v.cliente}</p>
-                        <p className="mt-2 text-sm text-slate-300">{v.container} • {v.operacao}</p>
-                        <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()} • {v.permanencia}</p>
+                        <p className="mt-2 text-sm text-slate-300">{v.numeroContainer} • {v.operacao}</p>
+                        <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()} • {formatDuration(v.entrada)}</p>
                       </div>
                       <div className="flex-shrink-0">
                         <button
@@ -284,7 +213,7 @@ export default function VeiculosNaUnidadePage() {
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-slate-400">Contêiner</p>
-                <p className="text-sm font-medium text-slate-50">{selected.container}</p>
+                <p className="text-sm font-medium text-slate-50">{selected.numeroContainer}</p>
               </div>
               <div className="space-y-1">
                 <p className="text-xs text-slate-400">Entrada</p>

@@ -1,6 +1,7 @@
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { ModuleCard } from './ModuleCard';
+import { DashboardStats } from './DashboardStats';
 
 const modules = [
   { title: 'Nova Entrada', description: 'Registre novas cargas e entregas.', icon: '➕' },
@@ -28,9 +29,7 @@ export function DashboardPage() {
                   Controle logístico integrado para terminais, com visão rápida das entradas, veículos e ações operacionais.
                 </p>
               </div>
-              <div className="rounded-2xl border border-sky-500/20 bg-sky-500/10 px-4 py-3 text-sm text-sky-200">
-                17 veículos ativos · 5 movimentações hoje
-              </div>
+              <DashboardStats />
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -1,113 +1,25 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import Link from 'next/link';
-
-type RecordItem = {
-  id: string;
-  placaCavalo: string;
-  placaCarreta: string;
-  motorista: string;
-  cliente: string;
-  container: string;
-  lacre: string;
-  operacao: string;
-  unidade: 'JAV 1' | 'JAV 2';
-  entrada: string | null;
-  saida: string | null;
-  permanencia: string;
-  status: string;
-};
-
-const FAKE_RECORDS: RecordItem[] = [
-  {
-    id: 'r1',
-    placaCavalo: 'ABC1D23',
-    placaCarreta: 'XYZ9E87',
-    motorista: 'João Silva',
-    cliente: 'GrainCorp',
-    container: 'CONT1234567',
-    lacre: 'LAC12345',
-    operacao: 'Descarregamento',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T08:15:00Z',
-    saida: null,
-    permanencia: '2h 15m',
-    status: 'Na Portaria',
-  },
-  {
-    id: 'r2',
-    placaCavalo: 'DEF2G45',
-    placaCarreta: 'LMN1O23',
-    motorista: 'Maria Pereira',
-    cliente: 'OceanExport',
-    container: 'CONT2345678',
-    lacre: 'LAC23456',
-    operacao: 'Carregamento',
-    unidade: 'JAV 2',
-    entrada: '2026-07-29T06:40:00Z',
-    saida: '2026-07-29T09:05:00Z',
-    permanencia: '2h 25m',
-    status: 'Finalizada',
-  },
-  {
-    id: 'r3',
-    placaCavalo: 'GHI3J67',
-    placaCarreta: 'OPQ4R56',
-    motorista: 'Carlos Eduardo',
-    cliente: 'LogiTrans',
-    container: 'CONT3456789',
-    lacre: 'LAC34567',
-    operacao: 'Inspeção',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T09:30:00Z',
-    saida: null,
-    permanencia: '1h 0m',
-    status: 'Aguardando Saída',
-  },
-  {
-    id: 'r4',
-    placaCavalo: 'JKL4K89',
-    placaCarreta: 'STU7V89',
-    motorista: 'Fernanda Lima',
-    cliente: 'ContainerCo',
-    container: 'CONT4567890',
-    lacre: 'LAC45678',
-    operacao: 'Pesagem',
-    unidade: 'JAV 2',
-    entrada: '2026-07-29T05:20:00Z',
-    saida: null,
-    permanencia: '4h 25m',
-    status: 'Em Operação',
-  },
-  {
-    id: 'r5',
-    placaCavalo: 'MNO5L01',
-    placaCarreta: 'VWX8Y01',
-    motorista: 'Rafael Costa',
-    cliente: 'AgroLine',
-    container: 'CONT5678901',
-    lacre: 'LAC56789',
-    operacao: 'Aguardando liberação',
-    unidade: 'JAV 1',
-    entrada: '2026-07-29T07:10:00Z',
-    saida: null,
-    permanencia: '2h 55m',
-    status: 'Na Portaria',
-  },
-];
+import { formatPermanencia, getAllMovements } from '@/lib/movements';
+import type { VehicleMovement } from '@/types';
 
 export default function ConsultaPage() {
-  const [records] = useState<RecordItem[]>(FAKE_RECORDS);
+  const [records, setRecords] = useState<VehicleMovement[]>([]);
   const [query, setQuery] = useState('');
   const [fUnidade, setFUnidade] = useState<'Todas' | 'JAV 1' | 'JAV 2'>('Todas');
   const [fCliente, setFCliente] = useState('Todos');
-  const [fStatus, setFStatus] = useState('Todos');
+  const [fStatus, setFStatus] = useState<'Todos' | 'Na Portaria' | 'Em Operação' | 'Aguardando Saída' | 'Finalizado'>('Todos');
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
-  const [selected, setSelected] = useState<RecordItem | null>(null);
+  const [selected, setSelected] = useState<VehicleMovement | null>(null);
+
+  useEffect(() => {
+    setRecords(getAllMovements());
+  }, []);
 
   const clientes = useMemo(() => {
     const setC = new Set<string>();
@@ -127,7 +39,7 @@ export default function ConsultaPage() {
           r.placaCarreta.toLowerCase().includes(q) ||
           r.motorista.toLowerCase().includes(q) ||
           r.cliente.toLowerCase().includes(q) ||
-          r.container.toLowerCase().includes(q) ||
+          r.numeroContainer.toLowerCase().includes(q) ||
           r.lacre.toLowerCase().includes(q);
         if (!matches) return false;
       }
@@ -145,9 +57,14 @@ export default function ConsultaPage() {
     });
   }, [records, query, fUnidade, fCliente, fStatus, periodStart, periodEnd]);
 
-  const openView = (r: RecordItem) => {
+  const openView = (r: VehicleMovement) => {
     setSelected(r);
     setModalOpen(true);
+  };
+
+  const formatDuration = (entrada?: string | null, saida?: string | null) => {
+    if (!entrada) return '-';
+    return formatPermanencia(entrada, saida);
   };
 
   return (
@@ -202,14 +119,14 @@ export default function ConsultaPage() {
 
               <select
                 value={fStatus}
-                onChange={(e) => setFStatus(e.target.value)}
+                onChange={(e) => setFStatus(e.target.value as 'Todos' | 'Na Portaria' | 'Em Operação' | 'Aguardando Saída' | 'Finalizado')}
                 className="rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-slate-100 outline-none transition focus:border-emerald-400/60 focus:ring-2 focus:ring-emerald-400/20"
               >
                 <option>Todos</option>
                 <option>Na Portaria</option>
                 <option>Em Operação</option>
                 <option>Aguardando Saída</option>
-                <option>Finalizada</option>
+                <option>Finalizado</option>
               </select>
 
               <div className="flex gap-2">
@@ -245,13 +162,13 @@ export default function ConsultaPage() {
                         <td className="px-4 py-3">{r.placaCarreta}</td>
                         <td className="px-4 py-3">{r.motorista}</td>
                         <td className="px-4 py-3">{r.cliente}</td>
-                        <td className="px-4 py-3">{r.container}</td>
+                        <td className="px-4 py-3">{r.numeroContainer}</td>
                         <td className="px-4 py-3">{r.lacre}</td>
                         <td className="px-4 py-3">{r.operacao}</td>
                         <td className="px-4 py-3">{r.unidade}</td>
                         <td className="px-4 py-3">{r.entrada ? new Date(r.entrada).toLocaleString() : '-'}</td>
                         <td className="px-4 py-3">{r.saida ? new Date(r.saida).toLocaleString() : '-'}</td>
-                        <td className="px-4 py-3">{r.permanencia}</td>
+                        <td className="px-4 py-3">{formatDuration(r.entrada, r.saida)}</td>
                         <td className="px-4 py-3">{r.status}</td>
                         <td className="px-4 py-3">
                           <button onClick={() => openView(r)} className="rounded-2xl border border-white/10 bg-sky-500/10 px-3 py-2 text-sm text-sky-200 transition hover:bg-sky-500/20">Visualizar</button>
@@ -270,7 +187,7 @@ export default function ConsultaPage() {
                         <p className="text-sm text-slate-400">{r.unidade} • {r.status}</p>
                         <h3 className="mt-1 text-lg font-semibold text-slate-50">{r.placaCavalo} / {r.placaCarreta}</h3>
                         <p className="mt-1 text-sm text-slate-400">{r.motorista} · {r.cliente}</p>
-                        <p className="mt-2 text-sm text-slate-300">{r.container} • {r.operacao}</p>
+                        <p className="mt-2 text-sm text-slate-300">{r.numeroContainer} • {r.operacao}</p>
                         <p className="mt-2 text-xs text-slate-400">Entrada: {r.entrada ? new Date(r.entrada).toLocaleString() : '-'} • Saída: {r.saida ? new Date(r.saida).toLocaleString() : '-'}</p>
                       </div>
                       <div className="flex-shrink-0">
@@ -315,7 +232,7 @@ export default function ConsultaPage() {
               </div>
               <div>
                 <p className="text-xs text-slate-400">Contêiner</p>
-                <p className="text-sm font-medium text-slate-50">{selected.container}</p>
+                <p className="text-sm font-medium text-slate-50">{selected.numeroContainer}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-400">Lacre</p>
@@ -339,7 +256,7 @@ export default function ConsultaPage() {
               </div>
               <div>
                 <p className="text-xs text-slate-400">Permanência</p>
-                <p className="text-sm font-medium text-slate-50">{selected.permanencia}</p>
+                <p className="text-sm font-medium text-slate-50">{formatDuration(selected.entrada, selected.saida)}</p>
               </div>
               <div>
                 <p className="text-xs text-slate-400">Status</p>
@@ -350,15 +267,21 @@ export default function ConsultaPage() {
             <div className="mt-6 grid gap-4 md:grid-cols-3">
               <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
                 <p className="text-sm text-slate-400">Foto veículo</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">Foto fictícia</div>
+                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
+                  {selected?.fotoVeiculo ?? 'Foto fictícia'}
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
                 <p className="text-sm text-slate-400">Foto contêiner</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">Foto fictícia</div>
+                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
+                  {selected?.fotoContainer ?? 'Foto fictícia'}
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
                 <p className="text-sm text-slate-400">Foto documento</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">Foto fictícia</div>
+                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
+                  {selected?.fotoDocumento ?? 'Foto fictícia'}
+                </div>
               </div>
             </div>
 
