@@ -17,6 +17,7 @@ export default function VeiculosNaUnidadePage() {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [, setClockTick] = useState(0);
 
   const loadMovements = async () => {
     try {
@@ -36,7 +37,13 @@ export default function VeiculosNaUnidadePage() {
     const unsubscribe = subscribeToMovements(() => {
       loadMovements();
     });
-    return unsubscribe;
+    const timer = window.setInterval(() => {
+      setClockTick((current) => current + 1);
+    }, 60_000);
+    return () => {
+      unsubscribe();
+      window.clearInterval(timer);
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -80,6 +87,34 @@ export default function VeiculosNaUnidadePage() {
 
   const formatDuration = (iso: string) => formatPermanencia(iso, undefined);
 
+  const getHoursInside = (iso: string) =>
+    Math.max(0, (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60));
+
+  const getPermanenceClasses = (iso: string) => {
+    const hours = getHoursInside(iso);
+    if (hours >= 24) return 'border-rose-400/30 bg-rose-500/15 text-rose-200';
+    if (hours >= 6) return 'border-orange-400/30 bg-orange-500/15 text-orange-200';
+    if (hours >= 2) return 'border-amber-400/30 bg-amber-500/15 text-amber-200';
+    return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200';
+  };
+
+  const getStatusClasses = (status: VehicleMovement['status']) => {
+    if (status === 'Aguardando Saída') {
+      return 'border-orange-400/30 bg-orange-500/15 text-orange-200';
+    }
+    if (status === 'Em Operação') {
+      return 'border-amber-400/30 bg-amber-500/15 text-amber-200';
+    }
+    if (status === 'Finalizado') {
+      return 'border-slate-400/30 bg-slate-500/15 text-slate-200';
+    }
+    return 'border-emerald-400/30 bg-emerald-500/15 text-emerald-200';
+  };
+
+  const totalJav1 = data.filter((v) => v.unidade === 'JAV 1').length;
+  const totalJav2 = data.filter((v) => v.unidade === 'JAV 2').length;
+  const totalAcima24h = data.filter((v) => getHoursInside(v.entrada) >= 24).length;
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_24%),#020617]">
       <Sidebar />
@@ -101,6 +136,25 @@ export default function VeiculosNaUnidadePage() {
           </div>
 
           <section className="mt-6 rounded-[32px] border border-white/10 bg-slate-900/50 p-4 shadow-[0_20px_80px_-40px_rgba(0,0,0,0.8)] backdrop-blur sm:p-6">
+            <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
+              <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Veículos ativos</p>
+                <p className="mt-3 text-4xl font-bold text-slate-50">{data.length}</p>
+              </div>
+              <div className="rounded-3xl border border-emerald-400/20 bg-emerald-500/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200/80">JAV 1</p>
+                <p className="mt-3 text-4xl font-bold text-emerald-300">{totalJav1}</p>
+              </div>
+              <div className="rounded-3xl border border-cyan-400/20 bg-cyan-500/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200/80">JAV 2</p>
+                <p className="mt-3 text-4xl font-bold text-cyan-300">{totalJav2}</p>
+              </div>
+              <div className="rounded-3xl border border-rose-400/20 bg-rose-500/10 p-5">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-rose-200/80">Acima de 24h</p>
+                <p className="mt-3 text-4xl font-bold text-rose-300">{totalAcima24h}</p>
+              </div>
+            </div>
+
             <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
               <div className="flex w-full flex-col gap-2 md:w-1/2">
                 <input
@@ -182,12 +236,20 @@ export default function VeiculosNaUnidadePage() {
                         <td className="px-4 py-3">{v.operacao}</td>
                         <td className="px-4 py-3">{v.unidade}</td>
                         <td className="px-4 py-3">{new Date(v.entrada).toLocaleString()}</td>
-                        <td className="px-4 py-3">{formatDuration(v.entrada)}</td>
-                        <td className="px-4 py-3">{v.status}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${getPermanenceClasses(v.entrada)}`}>
+                            {formatDuration(v.entrada)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(v.status)}`}>
+                            {v.status}
+                          </span>
+                        </td>
                         <td className="px-4 py-3">
                           <button
                             onClick={() => openModal(v)}
-                            className="rounded-2xl border border-white/10 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 transition hover:bg-emerald-500/20"
+                            className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400"
                           >
                             Finalizar Saída
                           </button>
@@ -206,16 +268,26 @@ export default function VeiculosNaUnidadePage() {
                     <div key={v.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="text-sm text-slate-400">{v.unidade} • {v.status}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="rounded-full border border-white/10 bg-slate-900 px-3 py-1 text-xs font-semibold text-slate-300">
+                              {v.unidade}
+                            </span>
+                            <span className={`rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(v.status)}`}>
+                              {v.status}
+                            </span>
+                          </div>
                           <h3 className="mt-1 text-lg font-semibold text-slate-50">{v.placaCavalo} / {v.placaCarreta}</h3>
                           <p className="mt-1 text-sm text-slate-400">{v.motorista} · {v.cliente}</p>
                           <p className="mt-2 text-sm text-slate-300">{v.numeroContainer} • {v.operacao}</p>
-                          <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()} • {formatDuration(v.entrada)}</p>
+                          <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()}</p>
+                          <span className={`mt-3 inline-flex rounded-full border px-3 py-1 text-sm font-bold ${getPermanenceClasses(v.entrada)}`}>
+                            Permanência: {formatDuration(v.entrada)}
+                          </span>
                         </div>
                         <div className="flex-shrink-0">
                           <button
                             onClick={() => openModal(v)}
-                            className="rounded-2xl border border-white/10 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 transition hover:bg-emerald-500/20"
+                            className="rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-emerald-950/30 transition hover:bg-emerald-400"
                           >
                             Finalizar Saída
                           </button>
