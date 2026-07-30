@@ -7,8 +7,10 @@ import { useAuth } from '@/components/AuthProvider';
 const items = [
   { label: 'Nova Entrada', href: '/nova-entrada' },
   { label: 'Veículos na Unidade', href: '/veiculos-na-unidade' },
+  { label: 'Controle de Contêineres', href: '/controle-containers' },
   { label: 'Consulta', href: '/consulta' },
-  { label: 'Painel', href: '/painel' },
+  { label: 'Painel Operacional', href: '/painel-operacional' },
+  { label: 'Dashboard Gerencial', href: '/dashboard-gerencial' },
   { label: 'Usuários', href: '/usuarios' },
   { label: 'Configurações', href: '/configuracoes' },
 ];
