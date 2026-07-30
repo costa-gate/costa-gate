@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, BarChart3, Clock3, FileImage, TrendingUp } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 import { supabase } from '@/lib/supabase';
 import type { VehicleMovement } from '@/types';
@@ -129,34 +128,37 @@ export function ManagementDashboard() {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
-    const active = items.filter((item) => item.status !== 'Finalizado' && !item.saida);
+    const vehiclesInUnit = items.filter((item) => !item.saida).length;
     const entriesToday = items.filter((item) => {
       const timestamp = toTimestamp(item.entrada);
       return timestamp !== null && timestamp >= todayStart.getTime() && timestamp <= todayEnd.getTime();
-    });
+    }).length;
     const exitsToday = items.filter((item) => {
       const timestamp = toTimestamp(item.saida);
       return timestamp !== null && timestamp >= todayStart.getTime() && timestamp <= todayEnd.getTime();
-    });
-    const finalized = items.filter((item) => item.status === 'Finalizado' && item.entrada && item.saida);
-    const durations = finalized
+    }).length;
+    const durations = items
       .map((item) => {
         const start = toTimestamp(item.entrada);
         const end = toTimestamp(item.saida);
         if (start === null || end === null) return null;
-        return Math.max(0, Math.floor((end - start) / 60000));
+        return Math.max(0, (end - start) / 60000);
       })
-      .filter((value): value is number => value !== null && Number.isFinite(value) && value >= 0);
-    const averageMinutes = durations.length > 0 ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
-    const withPhotos = items.filter((item) => Boolean(item.fotoVeiculo || item.fotoContainer || item.fotoDocumento)).length;
+      .filter((value): value is number => value !== null && Number.isFinite(value));
+    const averageHours = durations.length > 0 ? durations.reduce((sum, value) => sum + value, 0) / durations.length / 60 : 0;
+    const averagePermanencia = averageHours > 0 ? `${averageHours.toFixed(1)}h` : '—';
+    const above24Hours = items.filter((item) => {
+      const start = toTimestamp(item.entrada);
+      return !item.saida && start !== null && now - start >= 24 * 60 * 60 * 1000;
+    }).length;
 
     return {
       total: items.length,
-      ativos: active.length,
-      entradasHoje: entriesToday.length,
-      saidasHoje: exitsToday.length,
-      permanenciaMedia: formatDurationMinutes(averageMinutes),
-      fotos: withPhotos,
+      vehiclesInUnit,
+      entriesToday,
+      exitsToday,
+      averagePermanencia,
+      above24Hours,
     };
   }, [items]);
 
@@ -203,45 +205,89 @@ export function ManagementDashboard() {
         </div>
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <p className="text-sm text-slate-400">Total de registros</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.total}</p>
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400">
+              <span aria-hidden="true" className="text-xl">🚛</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Veículos na unidade</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.vehiclesInUnit}</p>
+              <p className="mt-2 text-sm text-slate-400">Veículos com saída ainda não registrada.</p>
+            </div>
+          </div>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <p className="text-sm text-slate-400">Veículos ativos</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.ativos}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <p className="text-sm text-slate-400">Entradas hoje</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.entradasHoje}</p>
-        </div>
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <p className="text-sm text-slate-400">Saídas hoje</p>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.saidasHoje}</p>
-        </div>
-      </section>
 
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-2">
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <div className="flex items-center gap-2 text-sm text-slate-400">
-            <Clock3 className="h-4 w-4" />
-            Permanência média
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-500/10 text-cyan-400">
+              <span aria-hidden="true" className="text-xl">↗</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Entradas hoje</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.entriesToday}</p>
+              <p className="mt-2 text-sm text-slate-400">Registros de entrada com data de hoje.</p>
+            </div>
           </div>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.permanenciaMedia}</p>
         </div>
-        <div className="rounded-2xl border border-white/10 bg-slate-900/70 p-4">
-          <div className="flex items-center gap-2 text-sm text-slate-400">
-            <FileImage className="h-4 w-4" />
-            Registros com foto
+
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-500/10 text-rose-400">
+              <span aria-hidden="true" className="text-xl">↘</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Saídas hoje</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.exitsToday}</p>
+              <p className="mt-2 text-sm text-slate-400">Movimentações finalizadas hoje.</p>
+            </div>
           </div>
-          <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.fotos}</p>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-violet-500/10 text-violet-400">
+              <span aria-hidden="true" className="text-xl">▦</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Total de movimentações</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.total}</p>
+              <p className="mt-2 text-sm text-slate-400">Soma de todas as movimentações carregadas.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/10 text-amber-400">
+              <span aria-hidden="true" className="text-xl">⏱</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Permanência média</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.averagePermanencia}</p>
+              <p className="mt-2 text-sm text-slate-400">Duração média em horas por movimentação.</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-slate-900/70 p-6 shadow-sm">
+          <div className="flex items-center gap-3 text-slate-200">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-500/10 text-slate-200">
+              <span aria-hidden="true" className="text-xl">!</span>
+            </div>
+            <div>
+              <p className="text-sm uppercase tracking-[0.25em] text-slate-400">Veículos acima de 24h</p>
+              <p className="mt-2 text-3xl font-semibold text-slate-50">{metrics.above24Hours}</p>
+              <p className="mt-2 text-sm text-slate-400">Veículos sem saída há mais de 24 horas.</p>
+            </div>
+          </div>
         </div>
       </section>
 
       <section className="rounded-[28px] border border-white/10 bg-slate-900/60 p-5">
         <div className="mb-4 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.3em] text-emerald-400">
-          <BarChart3 className="h-4 w-4" />
+          <span aria-hidden="true">▥</span>
           Últimas movimentações
         </div>
         <div className="overflow-x-auto">

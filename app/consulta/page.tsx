@@ -111,10 +111,79 @@ export default function ConsultaPage() {
     return formatPermanencia(entrada, saida);
   };
 
+  const getStatusClasses = (status?: string | null) => {
+    switch (status) {
+      case 'Finalizado':
+        return 'border-emerald-400/20 bg-emerald-500/10 text-emerald-300';
+      case 'Na Portaria':
+        return 'border-amber-400/20 bg-amber-500/10 text-amber-300';
+      case 'Em Operação':
+        return 'border-sky-400/20 bg-sky-500/10 text-sky-300';
+      case 'Aguardando Saída':
+        return 'border-violet-400/20 bg-violet-500/10 text-violet-300';
+      default:
+        return 'border-white/10 bg-slate-500/10 text-slate-300';
+    }
+  };
+
+  const exportCsv = () => {
+    const headers = [
+      'Placa Cavalo',
+      'Placa Carreta',
+      'Motorista',
+      'Cliente',
+      'Contêiner',
+      'Lacre',
+      'Operação',
+      'Unidade',
+      'Entrada',
+      'Saída',
+      'Permanência',
+      'Status',
+    ];
+
+    const escapeCsv = (value: unknown) => {
+      const normalized = String(value ?? '').replace(/"/g, '""');
+      return `"${normalized}"`;
+    };
+
+    const rows = filtered.map((r) => [
+      r.placaCavalo,
+      r.placaCarreta,
+      r.motorista,
+      r.cliente,
+      r.numeroContainer,
+      r.lacre,
+      r.operacao,
+      r.unidade,
+      r.entrada ? new Date(r.entrada).toLocaleString('pt-BR') : '',
+      r.saida ? new Date(r.saida).toLocaleString('pt-BR') : '',
+      formatDuration(r.entrada, r.saida),
+      r.status,
+    ]);
+
+    const csv = '\uFEFF' + [headers, ...rows].map((row) => row.map(escapeCsv).join(';')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `costa-gate-movimentacoes-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const printReport = () => {
+    window.print();
+  };
+
+  const generatedAt = new Date().toLocaleString('pt-BR');
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.15),_transparent_24%),#020617]">
-      <Sidebar />
-      <main className="min-h-screen w-full px-4 py-6 sm:px-6 lg:ml-[280px] lg:px-8 lg:py-8">
+      <div className="print:hidden"><Sidebar /></div>
+      <main className="min-h-screen w-full px-4 py-6 sm:px-6 lg:ml-[280px] lg:px-8 lg:py-8 print:hidden">
         <div className="mx-auto max-w-7xl">
           <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-6 shadow-[0_20px_80px_-40px_rgba(0,0,0,0.9)] backdrop-blur sm:p-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -123,7 +192,21 @@ export default function ConsultaPage() {
                 <h1 className="mt-2 text-3xl font-semibold text-slate-50">Consulta</h1>
                 <p className="mt-2 text-sm leading-7 text-slate-400">Busque por movimentações por placa, motorista, cliente, contêiner ou lacre</p>
               </div>
-              <div className="mt-2 flex gap-2">
+              <div className="mt-2 flex flex-wrap gap-2 print:hidden">
+                <button
+                  type="button"
+                  onClick={exportCsv}
+                  className="rounded-full border border-emerald-400/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/20"
+                >
+                  Exportar Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={printReport}
+                  className="rounded-full border border-sky-400/20 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-200 transition hover:bg-sky-500/20"
+                >
+                  Imprimir / PDF
+                </button>
                 <Link href="/" className="rounded-full border border-white/10 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-emerald-400/40 hover:bg-slate-900">
                   Voltar
                 </Link>
@@ -226,7 +309,11 @@ export default function ConsultaPage() {
                         <td className="px-4 py-3">{r.entrada ? new Date(r.entrada).toLocaleString() : '-'}</td>
                         <td className="px-4 py-3">{r.saida ? new Date(r.saida).toLocaleString() : '-'}</td>
                         <td className="px-4 py-3">{formatDuration(r.entrada, r.saida)}</td>
-                        <td className="px-4 py-3">{r.status}</td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex rounded-full border px-3 py-1 text-xs font-semibold ${getStatusClasses(r.status)}`}>
+                            {r.status}
+                          </span>
+                        </td>
                         <td className="px-4 py-3">
                           <button onClick={() => openView(r)} className="rounded-2xl border border-white/10 bg-sky-500/10 px-3 py-2 text-sm text-sky-200 transition hover:bg-sky-500/20">Visualizar</button>
                         </td>
@@ -243,7 +330,12 @@ export default function ConsultaPage() {
                     <div key={r.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
                       <div className="flex items-start justify-between gap-2">
                         <div>
-                          <p className="text-sm text-slate-400">{r.unidade} • {r.status}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm text-slate-400">{r.unidade}</p>
+                            <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${getStatusClasses(r.status)}`}>
+                              {r.status}
+                            </span>
+                          </div>
                           <h3 className="mt-1 text-lg font-semibold text-slate-50">{r.placaCavalo} / {r.placaCarreta}</h3>
                           <p className="mt-1 text-sm text-slate-400">{r.motorista} · {r.cliente}</p>
                           <p className="mt-2 text-sm text-slate-300">{r.numeroContainer} • {r.operacao}</p>
@@ -261,6 +353,70 @@ export default function ConsultaPage() {
           </section>
         </div>
       </main>
+
+
+      <section className="hidden print:block print:bg-white print:p-8 print:text-black">
+        <div className="border-b border-slate-300 pb-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-emerald-700">Costa Gate</p>
+              <h1 className="mt-2 text-2xl font-bold">Relatório de Movimentações</h1>
+              <p className="mt-1 text-sm text-slate-600">Controle Logístico Terminal</p>
+            </div>
+            <div className="text-right text-xs text-slate-600">
+              <p>Emitido em</p>
+              <p className="font-semibold text-slate-900">{generatedAt}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3 rounded-lg border border-slate-300 p-4 text-xs">
+          <div><span className="font-semibold">Unidade:</span> {fUnidade}</div>
+          <div><span className="font-semibold">Cliente:</span> {fCliente}</div>
+          <div><span className="font-semibold">Status:</span> {fStatus}</div>
+          <div><span className="font-semibold">Pesquisa:</span> {query || 'Sem filtro'}</div>
+          <div><span className="font-semibold">Período inicial:</span> {periodStart || 'Não informado'}</div>
+          <div><span className="font-semibold">Período final:</span> {periodEnd || 'Não informado'}</div>
+        </div>
+
+        <div className="mt-5">
+          <table className="w-full border-collapse text-[10px]">
+            <thead>
+              <tr className="bg-slate-100 text-left">
+                <th className="border border-slate-300 px-2 py-2">Placa</th>
+                <th className="border border-slate-300 px-2 py-2">Motorista</th>
+                <th className="border border-slate-300 px-2 py-2">Cliente</th>
+                <th className="border border-slate-300 px-2 py-2">Unidade</th>
+                <th className="border border-slate-300 px-2 py-2">Operação</th>
+                <th className="border border-slate-300 px-2 py-2">Entrada</th>
+                <th className="border border-slate-300 px-2 py-2">Saída</th>
+                <th className="border border-slate-300 px-2 py-2">Permanência</th>
+                <th className="border border-slate-300 px-2 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={`print-${r.id}`}>
+                  <td className="border border-slate-300 px-2 py-2">{r.placaCavalo || r.placaCarreta || '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.motorista || '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.cliente || '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.unidade || '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.operacao || '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.entrada ? new Date(r.entrada).toLocaleString('pt-BR') : '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.saida ? new Date(r.saida).toLocaleString('pt-BR') : '-'}</td>
+                  <td className="border border-slate-300 px-2 py-2">{formatDuration(r.entrada, r.saida)}</td>
+                  <td className="border border-slate-300 px-2 py-2">{r.status || '-'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="mt-5 flex items-center justify-between border-t border-slate-300 pt-4 text-xs text-slate-600">
+          <p>Total de registros: <span className="font-semibold text-slate-900">{filtered.length}</span></p>
+          <p>Relatório gerado pelo Costa Gate</p>
+        </div>
+      </section>
 
       {modalOpen && selected ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

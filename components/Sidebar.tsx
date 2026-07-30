@@ -8,7 +8,7 @@ const items = [
   { label: 'Nova Entrada', href: '/nova-entrada' },
   { label: 'Veículos na Unidade', href: '/veiculos-na-unidade' },
   { label: 'Consulta', href: '/consulta' },
-  { label: 'Painel', href: '/' },
+  { label: 'Painel', href: '/painel' },
   { label: 'Usuários', href: '/usuarios' },
   { label: 'Configurações', href: '/configuracoes' },
 ];
