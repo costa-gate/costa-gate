@@ -1,77 +1,152 @@
-import { VehicleMovement, STORAGE_KEY, StatusMovimentacao } from '@/types';
+import { supabase } from '@/lib/supabase';
+import type { StatusMovimentacao, VehicleMovement } from '@/types';
 
-const safeParse = (raw: string | null): VehicleMovement[] => {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed;
-  } catch (e) {
-    return [];
+const ensureAuthenticated = async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    throw new Error('Sessão expirada. Faça login novamente.');
   }
 };
 
-const readAll = (): VehicleMovement[] => {
-  if (typeof window === 'undefined') return [];
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  return safeParse(raw);
+type MovementFileMap = {
+  fotoVeiculo?: File | null;
+  fotoContainer?: File | null;
+  fotoDocumento?: File | null;
 };
 
-const writeAll = (items: VehicleMovement[]) => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+type MovementInput = Omit<Partial<VehicleMovement>, 'id' | 'entrada' | 'status'> & {
+  fotos?: {
+    fotoVeiculo?: string | null;
+    fotoContainer?: string | null;
+    fotoDocumento?: string | null;
+  };
+  files?: MovementFileMap;
 };
 
-export const getAllMovements = (): VehicleMovement[] => {
-  return readAll();
+const normalizeMovement = (row: Record<string, unknown>): VehicleMovement => ({
+  id: String(row.id ?? ''),
+  unidade: String(row.unidade ?? 'JAV 1'),
+  placaCavalo: String(row.placa_cavalo ?? ''),
+  placaCarreta: String(row.placa_carreta ?? ''),
+  motorista: String(row.motorista ?? ''),
+  telefone: row.telefone ? String(row.telefone) : '',
+  transportadora: row.transportadora ? String(row.transportadora) : '',
+  cliente: String(row.cliente ?? ''),
+  numeroContainer: String(row.numero_container ?? ''),
+  lacre: String(row.lacre ?? ''),
+  armador: row.armador ? String(row.armador) : '',
+  tipoContainer: row.tipo_container ? String(row.tipo_container) : '',
+  condicao: row.condicao ? String(row.condicao) : '',
+  operacao: String(row.operacao ?? ''),
+  observacoes: row.observacoes ? String(row.observacoes) : '',
+  fotoVeiculo: row.foto_veiculo ? String(row.foto_veiculo) : null,
+  fotoContainer: row.foto_container ? String(row.foto_container) : null,
+  fotoDocumento: row.foto_documento ? String(row.foto_documento) : null,
+  entrada: String(row.entrada_em ?? ''),
+  saida: row.saida_em ? String(row.saida_em) : null,
+  status: String(row.status ?? 'Na Portaria') as StatusMovimentacao,
+});
+
+const buildPayload = (input: MovementInput, now: string) => ({
+  unidade: input.unidade ?? 'JAV 1',
+  placa_cavalo: input.placaCavalo ?? '',
+  placa_carreta: input.placaCarreta ?? '',
+  motorista: input.motorista ?? '',
+  telefone: input.telefone ?? '',
+  transportadora: input.transportadora ?? '',
+  cliente: input.cliente ?? '',
+  numero_container: input.numeroContainer ?? '',
+  lacre: input.lacre ?? '',
+  armador: input.armador ?? '',
+  tipo_container: input.tipoContainer ?? '',
+  condicao: input.condicao ?? '',
+  operacao: input.operacao ?? '',
+  observacoes: input.observacoes ?? '',
+  foto_veiculo: input.fotos?.fotoVeiculo ?? null,
+  foto_container: input.fotos?.fotoContainer ?? null,
+  foto_documento: input.fotos?.fotoDocumento ?? null,
+  entrada_em: now,
+  status: 'Na Portaria' as StatusMovimentacao,
+});
+
+const allowedMimeTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+
+const buildStoragePath = (movementId: string, fieldName: 'fotoVeiculo' | 'fotoContainer' | 'fotoDocumento', file: File) => {
+  const extension = (file.name.split('.').pop() ?? 'bin').toLowerCase();
+  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+  return `${movementId}/${fieldName}-${Date.now()}-${safeName}.${extension}`;
 };
 
-export const getActiveMovements = (): VehicleMovement[] => {
-  return readAll().filter((m) => !m.saida);
+const uploadMovementFile = async (movementId: string, fieldName: 'fotoVeiculo' | 'fotoContainer' | 'fotoDocumento', file: File | null) => {
+  if (!file) return null;
+
+  const extension = (file.name.split('.').pop() ?? '').toLowerCase();
+  const isAllowedExtension = ['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(extension);
+  const isAllowedMime = allowedMimeTypes.includes(file.type);
+
+  if (!isAllowedExtension || !isAllowedMime) {
+    throw new Error('Formato de arquivo não suportado. Envie JPEG, PNG, WebP ou PDF.');
+  }
+
+  const path = buildStoragePath(movementId, fieldName, file);
+  const { error } = await supabase.storage.from('fotos-portaria').upload(path, file, {
+    cacheControl: '3600',
+    upsert: false,
+    contentType: file.type,
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Falha no upload da foto.');
+  }
+
+  return path;
 };
 
-export const createMovement = (input: Omit<Partial<VehicleMovement>, 'id' | 'entrada' | 'status'> & { fotos?: { fotoVeiculo?: string | null; fotoContainer?: string | null; fotoDocumento?: string | null } }) => {
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+export const getAllMovements = async (): Promise<VehicleMovement[]> => {
+  await ensureAuthenticated();
+  const { data, error } = await supabase.from('movimentacoes').select('*').order('entrada_em', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(normalizeMovement);
+};
+
+export const getActiveMovements = async (): Promise<VehicleMovement[]> => {
+  await ensureAuthenticated();
+  const { data, error } = await supabase.from('movimentacoes').select('*').neq('status', 'Finalizado').order('entrada_em', { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map(normalizeMovement);
+};
+
+export const createMovement = async (input: MovementInput): Promise<VehicleMovement> => {
+  await ensureAuthenticated();
   const now = new Date().toISOString();
-  const m: VehicleMovement = {
-    id,
-    unidade: (input.unidade as string) || 'JAV 1',
-    placaCavalo: (input.placaCavalo as string) || '',
-    placaCarreta: (input.placaCarreta as string) || '',
-    motorista: (input.motorista as string) || '',
-    telefone: (input.telefone as string) || '',
-    transportadora: (input.transportadora as string) || '',
-    cliente: (input.cliente as string) || '',
-    numeroContainer: (input.numeroContainer as string) || '',
-    lacre: (input.lacre as string) || '',
-    armador: (input.armador as string) || '',
-    tipoContainer: (input.tipoContainer as string) || '',
-    condicao: (input.condicao as string) || '',
-    operacao: (input.operacao as string) || '',
-    observacoes: (input.observacoes as string) || '',
-    fotoVeiculo: input.fotos?.fotoVeiculo ?? null,
-    fotoContainer: input.fotos?.fotoContainer ?? null,
-    fotoDocumento: input.fotos?.fotoDocumento ?? null,
-    entrada: now,
-    saida: null,
-    status: 'Na Portaria' as StatusMovimentacao,
+  const movementId = crypto.randomUUID();
+
+  const filePaths = {
+    fotoVeiculo: await uploadMovementFile(movementId, 'fotoVeiculo', input.files?.fotoVeiculo ?? null),
+    fotoContainer: await uploadMovementFile(movementId, 'fotoContainer', input.files?.fotoContainer ?? null),
+    fotoDocumento: await uploadMovementFile(movementId, 'fotoDocumento', input.files?.fotoDocumento ?? null),
   };
 
-  const all = readAll();
-  all.unshift(m);
-  writeAll(all);
-  return m;
+  const payload = buildPayload({
+    ...input,
+    fotos: {
+      fotoVeiculo: filePaths.fotoVeiculo ?? input.fotos?.fotoVeiculo ?? null,
+      fotoContainer: filePaths.fotoContainer ?? input.fotos?.fotoContainer ?? null,
+      fotoDocumento: filePaths.fotoDocumento ?? input.fotos?.fotoDocumento ?? null,
+    },
+  }, now);
+
+  const { data, error } = await supabase.from('movimentacoes').insert([{ ...payload, id: movementId }]).select().single();
+  if (error) throw new Error(error.message);
+  return normalizeMovement(data as Record<string, unknown>);
 };
 
-export const finalizeMovement = (id: string) => {
-  const all = readAll();
+export const finalizeMovement = async (id: string): Promise<VehicleMovement | null> => {
+  await ensureAuthenticated();
   const now = new Date().toISOString();
-  const idx = all.findIndex((a) => a.id === id);
-  if (idx === -1) return null;
-  all[idx].saida = now;
-  all[idx].status = 'Finalizado' as StatusMovimentacao;
-  writeAll(all);
-  return all[idx];
+  const { data, error } = await supabase.from('movimentacoes').update({ status: 'Finalizado', saida_em: now }).eq('id', id).select().single();
+  if (error) throw new Error(error.message);
+  return data ? normalizeMovement(data as Record<string, unknown>) : null;
 };
 
 export const formatPermanencia = (entrada: string, saida?: string | null) => {
@@ -89,23 +164,43 @@ export const formatPermanencia = (entrada: string, saida?: string | null) => {
   }
 };
 
-export const counts = () => {
-  const all = readAll();
+export const counts = (items: VehicleMovement[]) => {
   const now = new Date();
   const isSameDay = (dstr?: string | null) => {
     if (!dstr) return false;
     const d = new Date(dstr);
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   };
+
   return {
-    ativos: all.filter((a) => !a.saida).length,
-    entradasHoje: all.filter((a) => isSameDay(a.entrada)).length,
-    saidasHoje: all.filter((a) => isSameDay(a.saida)).length,
-    total: all.length,
+    ativos: items.filter((item) => item.status !== 'Finalizado' && !item.saida).length,
+    entradasHoje: items.filter((item) => isSameDay(item.entrada)).length,
+    saidasHoje: items.filter((item) => isSameDay(item.saida)).length,
+    total: items.length,
   };
 };
 
-export const clearAll = () => {
-  if (typeof window === 'undefined') return;
-  window.localStorage.removeItem(STORAGE_KEY);
+export const getMovementStats = async () => {
+  const movements = await getAllMovements();
+  return counts(movements);
+};
+
+export const getSignedPhotoUrl = async (path: string | null | undefined) => {
+  await ensureAuthenticated();
+  if (!path) return null;
+  const { data, error } = await supabase.storage.from('fotos-portaria').createSignedUrl(path, 60 * 60);
+  if (error || !data?.signedUrl) return null;
+  return data.signedUrl;
+};
+
+export const subscribeToMovements = (callback: () => void) => {
+  const channel = supabase.channel('movimentacoes-realtime');
+  channel.on('postgres_changes', { event: '*', schema: 'public', table: 'movimentacoes' }, () => {
+    callback();
+  });
+  channel.subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 };

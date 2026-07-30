@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import Link from 'next/link';
-import { formatPermanencia, getActiveMovements, finalizeMovement } from '@/lib/movements';
+import { formatPermanencia, finalizeMovement, getActiveMovements, subscribeToMovements } from '@/lib/movements';
 import type { VehicleMovement } from '@/types';
 
 export default function VeiculosNaUnidadePage() {
@@ -14,10 +14,29 @@ export default function VeiculosNaUnidadePage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState<VehicleMovement | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isFinalizing, setIsFinalizing] = useState(false);
+
+  const loadMovements = async () => {
+    try {
+      setIsLoading(true);
+      const loaded = await getActiveMovements();
+      setData(loaded);
+      setErrorMessage('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Falha ao buscar veículos.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const loaded = getActiveMovements();
-    setData(loaded);
+    loadMovements();
+    const unsubscribe = subscribeToMovements(() => {
+      loadMovements();
+    });
+    return unsubscribe;
   }, []);
 
   const filtered = useMemo(() => {
@@ -40,15 +59,23 @@ export default function VeiculosNaUnidadePage() {
     setSelected(vehicle);
     setModalOpen(true);
     setSuccessMessage('');
+    setErrorMessage('');
   };
 
-  const confirmSaida = () => {
+  const confirmSaida = async () => {
     if (!selected) return;
-    const updated = finalizeMovement(selected.id);
-    setModalOpen(false);
-    setSuccessMessage('Saída finalizada com sucesso');
-    // remove from active list
-    setData((prev) => prev.filter((p) => p.id !== selected.id));
+    setIsFinalizing(true);
+    setErrorMessage('');
+    try {
+      await finalizeMovement(selected.id);
+      setModalOpen(false);
+      setSuccessMessage('Saída finalizada com sucesso');
+      setData((prev) => prev.filter((p) => p.id !== selected.id));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Falha ao finalizar saída.');
+    } finally {
+      setIsFinalizing(false);
+    }
   };
 
   const formatDuration = (iso: string) => formatPermanencia(iso, undefined);
@@ -112,8 +139,21 @@ export default function VeiculosNaUnidadePage() {
               <div className="mt-4 rounded-3xl border border-emerald-400/20 bg-emerald-500/10 px-5 py-4 text-sm text-emerald-200">{successMessage}</div>
             ) : null}
 
+            {errorMessage ? (
+              <div className="mt-4 rounded-3xl border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">{errorMessage}</div>
+            ) : null}
+
             <div className="mt-6">
+              {isLoading ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-6 text-sm text-slate-300">Carregando veículos...</div>
+              ) : null}
+
+              {!isLoading && filtered.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-6 text-sm text-slate-300">Nenhum veículo ativo encontrado.</div>
+              ) : null}
+
               {/* Desktop table */}
+              {!isLoading && filtered.length > 0 ? (
               <div className="hidden w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/60 p-2 lg:block">
                 <table className="w-full table-auto text-sm">
                   <thead>
@@ -157,31 +197,34 @@ export default function VeiculosNaUnidadePage() {
                   </tbody>
                 </table>
               </div>
+              ) : null}
 
               {/* Mobile cards */}
-              <div className="grid gap-4 lg:hidden">
-                {filtered.map((v) => (
-                  <div key={v.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm text-slate-400">{v.unidade} • {v.status}</p>
-                        <h3 className="mt-1 text-lg font-semibold text-slate-50">{v.placaCavalo} / {v.placaCarreta}</h3>
-                        <p className="mt-1 text-sm text-slate-400">{v.motorista} · {v.cliente}</p>
-                        <p className="mt-2 text-sm text-slate-300">{v.numeroContainer} • {v.operacao}</p>
-                        <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()} • {formatDuration(v.entrada)}</p>
-                      </div>
-                      <div className="flex-shrink-0">
-                        <button
-                          onClick={() => openModal(v)}
-                          className="rounded-2xl border border-white/10 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 transition hover:bg-emerald-500/20"
-                        >
-                          Finalizar Saída
-                        </button>
+              {!isLoading && filtered.length > 0 ? (
+                <div className="grid gap-4 lg:hidden">
+                  {filtered.map((v) => (
+                    <div key={v.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm text-slate-400">{v.unidade} • {v.status}</p>
+                          <h3 className="mt-1 text-lg font-semibold text-slate-50">{v.placaCavalo} / {v.placaCarreta}</h3>
+                          <p className="mt-1 text-sm text-slate-400">{v.motorista} · {v.cliente}</p>
+                          <p className="mt-2 text-sm text-slate-300">{v.numeroContainer} • {v.operacao}</p>
+                          <p className="mt-2 text-xs text-slate-400">Entrada: {new Date(v.entrada).toLocaleString()} • {formatDuration(v.entrada)}</p>
+                        </div>
+                        <div className="flex-shrink-0">
+                          <button
+                            onClick={() => openModal(v)}
+                            className="rounded-2xl border border-white/10 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 transition hover:bg-emerald-500/20"
+                          >
+                            Finalizar Saída
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
@@ -223,7 +266,7 @@ export default function VeiculosNaUnidadePage() {
 
             <div className="mt-6 flex justify-end gap-2">
               <button onClick={() => setModalOpen(false)} className="rounded-2xl border border-white/10 bg-slate-950/70 px-4 py-2 text-sm text-slate-200">Cancelar</button>
-              <button onClick={confirmSaida} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950">Confirmar Saída</button>
+              <button onClick={confirmSaida} disabled={isFinalizing} className="rounded-2xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:opacity-70">{isFinalizing ? 'Finalizando...' : 'Confirmar Saída'}</button>
             </div>
           </div>
         </div>

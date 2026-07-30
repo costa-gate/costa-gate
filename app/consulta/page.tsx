@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sidebar } from '@/components/Sidebar';
+import { AnexoPreview } from '@/components/anexo-preview';
 import Link from 'next/link';
-import { formatPermanencia, getAllMovements } from '@/lib/movements';
+import { formatPermanencia, getAllMovements, getSignedPhotoUrl, subscribeToMovements } from '@/lib/movements';
 import type { VehicleMovement } from '@/types';
 
 export default function ConsultaPage() {
@@ -16,9 +17,30 @@ export default function ConsultaPage() {
   const [periodEnd, setPeriodEnd] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [selected, setSelected] = useState<VehicleMovement | null>(null);
+  const [photoUrls, setPhotoUrls] = useState<Record<string, string | null>>({});
+  const [photoLoadState, setPhotoLoadState] = useState<Record<string, { loading: boolean; error: boolean }>>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const loadMovements = async () => {
+    try {
+      setIsLoading(true);
+      const loaded = await getAllMovements();
+      setRecords(loaded);
+      setErrorMessage('');
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Falha ao buscar movimentações.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    setRecords(getAllMovements());
+    loadMovements();
+    const unsubscribe = subscribeToMovements(() => {
+      loadMovements();
+    });
+    return unsubscribe;
   }, []);
 
   const clientes = useMemo(() => {
@@ -57,9 +79,31 @@ export default function ConsultaPage() {
     });
   }, [records, query, fUnidade, fCliente, fStatus, periodStart, periodEnd]);
 
-  const openView = (r: VehicleMovement) => {
+  const openView = async (r: VehicleMovement) => {
     setSelected(r);
     setModalOpen(true);
+    setPhotoLoadState({
+      fotoVeiculo: { loading: true, error: false },
+      fotoContainer: { loading: true, error: false },
+      fotoDocumento: { loading: true, error: false },
+    });
+    const nextPhotoUrls: Record<string, string | null> = {};
+    for (const key of ['fotoVeiculo', 'fotoContainer', 'fotoDocumento'] as const) {
+      const path = r[key];
+      try {
+        nextPhotoUrls[key] = await getSignedPhotoUrl(path ?? null);
+      } catch {
+        nextPhotoUrls[key] = null;
+      }
+      setPhotoLoadState((current) => ({
+        ...current,
+        [key]: {
+          loading: false,
+          error: !nextPhotoUrls[key],
+        },
+      }));
+    }
+    setPhotoUrls(nextPhotoUrls);
   };
 
   const formatDuration = (entrada?: string | null, saida?: string | null) => {
@@ -135,7 +179,20 @@ export default function ConsultaPage() {
               </div>
             </div>
 
+            {errorMessage ? (
+              <div className="mt-4 rounded-3xl border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">{errorMessage}</div>
+            ) : null}
+
             <div className="mt-6">
+              {isLoading ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-6 text-sm text-slate-300">Carregando movimentações...</div>
+              ) : null}
+
+              {!isLoading && filtered.length === 0 ? (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-6 text-sm text-slate-300">Nenhuma movimentação encontrada.</div>
+              ) : null}
+
+              {!isLoading && filtered.length > 0 ? (
               <div className="hidden w-full overflow-auto rounded-2xl border border-white/10 bg-slate-950/60 p-2 lg:block">
                 <table className="w-full table-auto text-sm">
                   <thead>
@@ -178,25 +235,28 @@ export default function ConsultaPage() {
                   </tbody>
                 </table>
               </div>
+              ) : null}
 
-              <div className="grid gap-4 lg:hidden">
-                {filtered.map((r) => (
-                  <div key={r.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm text-slate-400">{r.unidade} • {r.status}</p>
-                        <h3 className="mt-1 text-lg font-semibold text-slate-50">{r.placaCavalo} / {r.placaCarreta}</h3>
-                        <p className="mt-1 text-sm text-slate-400">{r.motorista} · {r.cliente}</p>
-                        <p className="mt-2 text-sm text-slate-300">{r.numeroContainer} • {r.operacao}</p>
-                        <p className="mt-2 text-xs text-slate-400">Entrada: {r.entrada ? new Date(r.entrada).toLocaleString() : '-'} • Saída: {r.saida ? new Date(r.saida).toLocaleString() : '-'}</p>
-                      </div>
-                      <div className="flex-shrink-0">
-                        <button onClick={() => openView(r)} className="rounded-2xl border border-white/10 bg-sky-500/10 px-3 py-2 text-sm text-sky-200 transition hover:bg-sky-500/20">Visualizar</button>
+              {!isLoading && filtered.length > 0 ? (
+                <div className="grid gap-4 lg:hidden">
+                  {filtered.map((r) => (
+                    <div key={r.id} className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm text-slate-400">{r.unidade} • {r.status}</p>
+                          <h3 className="mt-1 text-lg font-semibold text-slate-50">{r.placaCavalo} / {r.placaCarreta}</h3>
+                          <p className="mt-1 text-sm text-slate-400">{r.motorista} · {r.cliente}</p>
+                          <p className="mt-2 text-sm text-slate-300">{r.numeroContainer} • {r.operacao}</p>
+                          <p className="mt-2 text-xs text-slate-400">Entrada: {r.entrada ? new Date(r.entrada).toLocaleString() : '-'} • Saída: {r.saida ? new Date(r.saida).toLocaleString() : '-'}</p>
+                        </div>
+                        <div className="flex-shrink-0">
+                          <button onClick={() => openView(r)} className="rounded-2xl border border-white/10 bg-sky-500/10 px-3 py-2 text-sm text-sky-200 transition hover:bg-sky-500/20">Visualizar</button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </section>
         </div>
@@ -208,7 +268,7 @@ export default function ConsultaPage() {
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-slate-50">Detalhes do veículo</h2>
-                <p className="mt-1 text-sm text-slate-400">Visualização completa com fotos fictícias</p>
+                <p className="mt-1 text-sm text-slate-400">Visualização completa com fotos reais do bucket privado</p>
               </div>
               <button onClick={() => setModalOpen(false)} className="text-slate-400">Fechar</button>
             </div>
@@ -265,24 +325,27 @@ export default function ConsultaPage() {
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-3">
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
-                <p className="text-sm text-slate-400">Foto veículo</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
-                  {selected?.fotoVeiculo ?? 'Foto fictícia'}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
-                <p className="text-sm text-slate-400">Foto contêiner</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
-                  {selected?.fotoContainer ?? 'Foto fictícia'}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-3 text-center">
-                <p className="text-sm text-slate-400">Foto documento</p>
-                <div className="mt-2 h-32 w-full rounded-md bg-gradient-to-br from-slate-800 to-slate-700 flex items-center justify-center text-slate-400">
-                  {selected?.fotoDocumento ?? 'Foto fictícia'}
-                </div>
-              </div>
+              <AnexoPreview
+                title="Foto do veículo"
+                path={selected?.fotoVeiculo}
+                signedUrl={photoUrls.fotoVeiculo ?? null}
+                loading={photoLoadState.fotoVeiculo?.loading ?? false}
+                error={photoLoadState.fotoVeiculo?.error ?? false}
+              />
+              <AnexoPreview
+                title="Foto do contêiner"
+                path={selected?.fotoContainer}
+                signedUrl={photoUrls.fotoContainer ?? null}
+                loading={photoLoadState.fotoContainer?.loading ?? false}
+                error={photoLoadState.fotoContainer?.error ?? false}
+              />
+              <AnexoPreview
+                title="Foto do documento"
+                path={selected?.fotoDocumento}
+                signedUrl={photoUrls.fotoDocumento ?? null}
+                loading={photoLoadState.fotoDocumento?.loading ?? false}
+                error={photoLoadState.fotoDocumento?.error ?? false}
+              />
             </div>
 
             <div className="mt-6 flex justify-end">

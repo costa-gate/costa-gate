@@ -54,12 +54,15 @@ export default function NovaEntradaPage() {
   const [values, setValues] = useState<FormValues>(initialValues);
   const [errors, setErrors] = useState<Partial<Record<keyof FormValues, string>>>({});
   const [successMessage, setSuccessMessage] = useState('');
+  const [submitError, setSubmitError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
 
   const handleChange = (field: keyof FormValues, value: string | File | null) => {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: '' }));
     setSuccessMessage('');
+    setSubmitError('');
   };
 
   const validate = () => {
@@ -82,47 +85,54 @@ export default function NovaEntradaPage() {
     return nextErrors;
   };
 
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const nextErrors = validate();
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
       setSuccessMessage('');
+      setSubmitError('');
       return;
     }
 
     setErrors({});
-    // persist in localStorage
-    const fotos = {
-      fotoVeiculo: values.fotoVeiculo ? values.fotoVeiculo.name : null,
-      fotoContainer: values.fotoContainer ? values.fotoContainer.name : null,
-      fotoDocumento: values.fotoDocumento ? values.fotoDocumento.name : null,
-    };
+    setIsSubmitting(true);
+    setSubmitError('');
 
-    createMovement({
-      unidade: values.unidade,
-      placaCavalo: values.placaCavalo,
-      placaCarreta: values.placaCarreta,
-      motorista: values.motorista,
-      telefone: values.telefone,
-      transportadora: values.transportadora,
-      cliente: values.cliente,
-      numeroContainer: values.numeroContainer,
-      lacre: values.lacre,
-      armador: values.armador,
-      tipoContainer: values.tipoContainer,
-      condicao: values.condicao,
-      operacao: values.operacao,
-      observacoes: values.observacoes,
-      fotos,
-    });
+    try {
+      await createMovement({
+        unidade: values.unidade,
+        placaCavalo: values.placaCavalo,
+        placaCarreta: values.placaCarreta,
+        motorista: values.motorista,
+        telefone: values.telefone,
+        transportadora: values.transportadora,
+        cliente: values.cliente,
+        numeroContainer: values.numeroContainer,
+        lacre: values.lacre,
+        armador: values.armador,
+        tipoContainer: values.tipoContainer,
+        condicao: values.condicao,
+        operacao: values.operacao,
+        observacoes: values.observacoes,
+        files: {
+          fotoVeiculo: values.fotoVeiculo,
+          fotoContainer: values.fotoContainer,
+          fotoDocumento: values.fotoDocumento,
+        },
+      });
 
-    setSuccessMessage('Entrada registrada com sucesso');
-    setValues(initialValues);
-    // redirect to vehicles list after small delay to show success
-    setTimeout(() => {
-      router.push('/veiculos-na-unidade');
-    }, 600);
+      setSuccessMessage('Entrada registrada com sucesso');
+      setValues(initialValues);
+      setTimeout(() => {
+        router.push('/veiculos-na-unidade');
+      }, 600);
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Falha ao registrar entrada.');
+      setSuccessMessage('');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleFileChange = (field: 'fotoVeiculo' | 'fotoContainer' | 'fotoDocumento', file: File | null) => {
@@ -340,7 +350,7 @@ export default function NovaEntradaPage() {
                 <label className="flex min-h-[140px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-slate-900/70 px-4 text-center text-sm text-slate-400 transition hover:border-emerald-400/50 hover:text-slate-100">
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
                     className="hidden"
                     onChange={(event) => handleFileChange('fotoVeiculo', event.target.files?.[0] ?? null)}
                   />
@@ -353,7 +363,7 @@ export default function NovaEntradaPage() {
                 <label className="flex min-h-[140px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-slate-900/70 px-4 text-center text-sm text-slate-400 transition hover:border-emerald-400/50 hover:text-slate-100">
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
                     className="hidden"
                     onChange={(event) => handleFileChange('fotoContainer', event.target.files?.[0] ?? null)}
                   />
@@ -366,7 +376,7 @@ export default function NovaEntradaPage() {
                 <label className="flex min-h-[140px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-slate-900/70 px-4 text-center text-sm text-slate-400 transition hover:border-emerald-400/50 hover:text-slate-100">
                   <input
                     type="file"
-                    accept="image/*"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
                     className="hidden"
                     onChange={(event) => handleFileChange('fotoDocumento', event.target.files?.[0] ?? null)}
                   />
@@ -381,6 +391,12 @@ export default function NovaEntradaPage() {
               </div>
             ) : null}
 
+            {submitError ? (
+              <div className="mt-4 rounded-3xl border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-200">
+                {submitError}
+              </div>
+            ) : null}
+
             <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
               <Link
                 href="/"
@@ -390,9 +406,10 @@ export default function NovaEntradaPage() {
               </Link>
               <button
                 type="submit"
-                className="inline-flex items-center justify-center rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                disabled={isSubmitting}
+                className="inline-flex items-center justify-center rounded-2xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                Registrar Entrada
+                {isSubmitting ? 'Registrando...' : 'Registrar Entrada'}
               </button>
             </div>
           </form>
