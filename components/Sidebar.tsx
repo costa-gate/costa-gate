@@ -1,67 +1,117 @@
 "use client";
 
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useAuth } from '@/components/AuthProvider';
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 
 const items = [
-  { label: 'Nova Entrada', href: '/nova-entrada' },
-  { label: 'Veículos na Unidade', href: '/veiculos-na-unidade' },
-  { label: 'Controle de Contêineres', href: '/controle-containers' },
-  { label: 'Consulta', href: '/consulta' },
-  { label: 'Painel Operacional', href: '/painel-operacional' },
-  { label: 'Dashboard Gerencial', href: '/dashboard-gerencial' },
-  { label: 'Usuários', href: '/usuarios' },
-  { label: 'Configurações', href: '/configuracoes' },
+  { label: "Nova Entrada", href: "/nova-entrada" },
+  { label: "Veículos na Unidade", href: "/veiculos-na-unidade" },
+  { label: "Controle de Contêineres", href: "/controle-containers" },
+  { label: "Fila Operacional", href: "/fila-operacional" },
+  { label: "Gestão do Pátio", href: "/gestao-patio" },
+  { label: "Consulta", href: "/consulta" },
+  { label: "Painel Operacional", href: "/painel-operacional" },
+  { label: "Dashboard Gerencial", href: "/dashboard-gerencial" },
+  { label: "Usuários", href: "/usuarios" },
+  { label: "Configurações", href: "/configuracoes" },
 ];
+
+const getInitials = (value?: string | null) => {
+  if (!value) return "CG";
+
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (parts.length === 0) return "CG";
+
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+};
 
 export function Sidebar() {
   const { user, signOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   const handleLogout = async () => {
     await signOut();
-    router.replace('/login');
+    router.replace("/login");
   };
 
+  const accountLabel =
+    user?.email ??
+    (user?.user_metadata?.nome as string | undefined) ??
+    "Usuário";
+
   return (
-    <aside className="w-full border-b border-white/10 bg-slate-950/95 px-5 py-5 backdrop-blur lg:fixed lg:inset-y-0 lg:left-0 lg:w-[280px] lg:flex lg:flex-col lg:border-b-0 lg:border-r lg:px-6 lg:py-8">
-      <div className="flex items-center gap-3">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500 font-semibold text-slate-950">
+    <aside className="fixed inset-y-0 left-0 z-40 hidden w-[280px] flex-col border-r border-white/10 bg-slate-950/95 px-4 py-6 shadow-2xl backdrop-blur lg:flex">
+      <div className="flex items-center gap-3 px-2">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-500 font-black text-slate-950 shadow-lg shadow-emerald-500/20">
           CG
         </div>
+
         <div>
-          <p className="text-base font-semibold text-slate-50">Costa Gate</p>
-          <p className="text-sm text-slate-400">Controle Terminal</p>
+          <p className="font-black text-slate-50">Costa Gate</p>
+          <p className="text-xs text-slate-400">Controle Terminal</p>
         </div>
       </div>
 
-      <nav className="mt-6 flex flex-col gap-2 lg:mt-8" aria-label="Menu principal">
-        {items.map((item) => (
-          <Link
-            key={item.label}
-            href={item.href}
-            className="rounded-2xl border border-transparent bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-emerald-400/40 hover:bg-white/10"
-          >
-            {item.label}
-          </Link>
-        ))}
+      <nav className="mt-7 flex-1 space-y-2 overflow-y-auto pr-1">
+        {items.map((item) => {
+          const active =
+            pathname === item.href ||
+            pathname?.startsWith(`${item.href}/`);
+
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`block rounded-2xl border px-4 py-3 text-sm font-bold transition ${
+                active
+                  ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-200"
+                  : "border-white/5 bg-slate-900/75 text-slate-200 hover:border-white/10 hover:bg-slate-900"
+              }`}
+            >
+              {item.label}
+            </Link>
+          );
+        })}
       </nav>
 
-      {user ? (
-        <div className="mt-auto space-y-3 border-t border-white/10 pt-4">
-          <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-slate-300">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Conta</p>
-            <p className="mt-1 truncate font-medium text-slate-100">{user.email}</p>
+      <div className="mt-5 border-t border-white/10 pt-4">
+        <div className="rounded-2xl border border-white/10 bg-slate-900/75 p-3">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">
+            Conta
+          </p>
+
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-slate-950 text-xs font-black text-slate-200">
+              {getInitials(accountLabel)}
+            </div>
+
+            <p
+              title={accountLabel}
+              className="min-w-0 truncate text-xs font-bold text-slate-200"
+            >
+              {accountLabel}
+            </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="w-full rounded-2xl border border-white/10 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-200 transition hover:bg-emerald-500/20"
-          >
-            Sair
-          </button>
         </div>
-      ) : null}
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="mt-3 w-full rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm font-black text-emerald-200 transition hover:bg-emerald-500/15"
+        >
+          Sair
+        </button>
+      </div>
     </aside>
   );
 }

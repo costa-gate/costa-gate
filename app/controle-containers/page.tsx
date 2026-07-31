@@ -12,6 +12,13 @@ import {
   subscribeToContainers,
 } from "@/lib/containers";
 import { getActiveMovements } from "@/lib/movements";
+import {
+  listarPatios,
+  listarQuadras,
+  subscribeToPatios,
+  type PatioTerminal,
+  type QuadraTerminal,
+} from "@/lib/patios";
 import type {
   CondicaoContainer,
   ContainerTerminal,
@@ -47,7 +54,12 @@ const formatDate = (value?: string | null) => {
 
 const formatPosition = (container: ContainerTerminal) =>
   container.posicao ||
-  [container.pilha && `P${container.pilha}`, container.fila && `F${container.fila}`, container.altura && `H${String(container.altura).padStart(2, "0")}`]
+  [
+    container.pilha && `P${container.pilha}`,
+    container.fila && `F${container.fila}`,
+    container.altura &&
+      `H${String(container.altura).padStart(2, "0")}`,
+  ]
     .filter(Boolean)
     .join("-") ||
   "Sem posição";
@@ -55,23 +67,31 @@ const formatPosition = (container: ContainerTerminal) =>
 export default function ControleContainersPage() {
   const [containers, setContainers] = useState<ContainerTerminal[]>([]);
   const [vehicles, setVehicles] = useState<VehicleMovement[]>([]);
+  const [patios, setPatios] = useState<PatioTerminal[]>([]);
+  const [quadras, setQuadras] = useState<QuadraTerminal[]>([]);
+
   const [query, setQuery] = useState("");
   const [unitFilter, setUnitFilter] = useState("Todas");
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [conditionFilter, setConditionFilter] = useState("Todas");
+
   const [selected, setSelected] = useState<ContainerTerminal | null>(null);
   const [timeline, setTimeline] = useState<EventoContainer[]>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [action, setAction] = useState<ActionType>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const [patio, setPatio] = useState("");
+  const [selectedUnit, setSelectedUnit] = useState("");
+  const [patioId, setPatioId] = useState("");
+  const [quadraId, setQuadraId] = useState("");
   const [pilha, setPilha] = useState("");
   const [fila, setFila] = useState("");
   const [altura, setAltura] = useState("1");
+
   const [motivo, setMotivo] =
     useState<MotivoMovimentacaoContainer>("Armazenamento inicial");
   const [observacao, setObservacao] = useState("");
@@ -83,18 +103,25 @@ export default function ControleContainersPage() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [containerData, vehicleData] = await Promise.all([
-        getActiveContainers(),
-        getActiveMovements(),
-      ]);
+
+      const [containerData, vehicleData, patioData, quadraData] =
+        await Promise.all([
+          getActiveContainers(),
+          getActiveMovements(),
+          listarPatios(),
+          listarQuadras(),
+        ]);
+
       setContainers(containerData);
       setVehicles(vehicleData);
+      setPatios(patioData);
+      setQuadras(quadraData);
       setError("");
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Não foi possível carregar o controle de contêineres."
+          : "Não foi possível carregar o controle de contêineres.",
       );
     } finally {
       setLoading(false);
@@ -103,8 +130,14 @@ export default function ControleContainersPage() {
 
   useEffect(() => {
     loadData();
-    const unsubscribe = subscribeToContainers(loadData);
-    return () => unsubscribe();
+
+    const unsubscribeContainers = subscribeToContainers(loadData);
+    const unsubscribePatios = subscribeToPatios(loadData);
+
+    return () => {
+      unsubscribeContainers();
+      unsubscribePatios();
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -136,10 +169,11 @@ export default function ControleContainersPage() {
         container.placaAtual,
         container.placaEntrada,
         container.posicao,
+        container.patio,
       ]
         .filter(Boolean)
         .some((value) =>
-          String(value).toLowerCase().includes(normalizedQuery)
+          String(value).toLowerCase().includes(normalizedQuery),
         );
     });
   }, [containers, query, unitFilter, statusFilter, conditionFilter]);
@@ -151,37 +185,64 @@ export default function ControleContainersPage() {
       jav2: containers.filter((item) => item.unidade === "JAV 2").length,
       stack: containers.filter((item) => item.status === "Na Pilha").length,
       scheduled: containers.filter(
-        (item) => item.status === "Programado para Saída"
+        (item) => item.status === "Programado para Saída",
       ).length,
       mounted: containers.filter((item) => item.status === "Montado").length,
     }),
-    [containers]
+    [containers],
   );
 
-  const resetActionForm = () => {
-    setPatio(selected?.patio ?? "");
-    setPilha(selected?.pilha ?? "");
-    setFila(selected?.fila ?? "");
-    setAltura(String(selected?.altura ?? 1));
-    setMotivo(
-      selected?.posicao ? "Reposicionamento" : "Armazenamento inicial"
-    );
-    setObservacao("");
-    setMovementId("");
-    setConditionOut(selected?.condicao ?? "Não Informado");
-  };
+  const availablePatios = useMemo(
+    () =>
+      patios.filter(
+        (patio) => !selectedUnit || patio.unidade === selectedUnit,
+      ),
+    [patios, selectedUnit],
+  );
 
-  const openAction = (container: ContainerTerminal, nextAction: ActionType) => {
+  const availableQuadras = useMemo(
+    () =>
+      quadras.filter(
+        (quadra) =>
+          quadra.patioId === patioId &&
+          quadra.ativo &&
+          quadra.permiteArmazenamento &&
+          quadra.status !== "Em Manutenção" &&
+          quadra.status !== "Bloqueada" &&
+          quadra.status !== "Inativa" &&
+          quadra.ocupacao < quadra.capacidadeOperacional,
+      ),
+    [quadras, patioId],
+  );
+
+  const selectedPatio = useMemo(
+    () => patios.find((patio) => patio.id === patioId) ?? null,
+    [patios, patioId],
+  );
+
+  const selectedQuadra = useMemo(
+    () => quadras.find((quadra) => quadra.id === quadraId) ?? null,
+    [quadras, quadraId],
+  );
+
+  const openAction = (
+    container: ContainerTerminal,
+    nextAction: ActionType,
+  ) => {
     setSelected(container);
     setAction(nextAction);
     setMessage("");
     setError("");
-    setPatio(container.patio ?? "");
+
+    setSelectedUnit(container.unidade);
+    setPatioId("");
+    setQuadraId("");
     setPilha(container.pilha ?? "");
     setFila(container.fila ?? "");
     setAltura(String(container.altura ?? 1));
+
     setMotivo(
-      container.posicao ? "Reposicionamento" : "Armazenamento inicial"
+      container.posicao ? "Reposicionamento" : "Armazenamento inicial",
     );
     setObservacao("");
     setMovementId("");
@@ -194,19 +255,32 @@ export default function ControleContainersPage() {
       setDetailsOpen(true);
       setTimeline([]);
       setError("");
+
       const history = await getContainerTimeline(container.id);
       setTimeline(history);
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Não foi possível carregar o histórico."
+          : "Não foi possível carregar o histórico.",
       );
     }
   };
 
+  const handleUnitChange = (unit: string) => {
+    setSelectedUnit(unit);
+    setPatioId("");
+    setQuadraId("");
+  };
+
+  const handlePatioChange = (id: string) => {
+    setPatioId(id);
+    setQuadraId("");
+  };
+
   const handleAction = async (event: FormEvent) => {
     event.preventDefault();
+
     if (!selected || !action) return;
 
     try {
@@ -223,10 +297,24 @@ export default function ControleContainersPage() {
       }
 
       if (action === "move") {
+        if (!selectedUnit) {
+          throw new Error("Selecione a unidade.");
+        }
+
+        if (!selectedPatio) {
+          throw new Error("Selecione o pátio.");
+        }
+
+        if (!selectedQuadra) {
+          throw new Error("Selecione a quadra.");
+        }
+
         await moveContainerToStack({
           containerId: selected.id,
-          unidade: selected.unidade,
-          patio: patio || undefined,
+          unidade: selectedUnit,
+          patio: selectedPatio.nome,
+          quadraId: selectedQuadra.id,
+          quadra: selectedQuadra.nome,
           pilha,
           fila,
           altura: Number(altura),
@@ -263,12 +351,11 @@ export default function ControleContainersPage() {
       }
 
       setAction(null);
-      resetActionForm();
       setMessage("Operação registrada com sucesso.");
       await loadData();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Falha ao registrar a operação."
+        err instanceof Error ? err.message : "Falha ao registrar a operação.",
       );
     } finally {
       setSaving(false);
@@ -285,11 +372,13 @@ export default function ControleContainersPage() {
             <p className="text-xs font-bold uppercase tracking-[0.28em] text-emerald-400">
               Operação de terminal
             </p>
+
             <div className="mt-3 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
               <div>
                 <h1 className="text-3xl font-black sm:text-4xl">
                   Controle de Contêineres
                 </h1>
+
                 <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
                   Estoque vivo do pátio, desmontagem, pateamento,
                   movimentação, programação, montagem e histórico operacional.
@@ -318,6 +407,7 @@ export default function ControleContainersPage() {
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-slate-500">
                   {label}
                 </p>
+
                 <p className={`mt-3 text-4xl font-black ${valueClass}`}>
                   {value}
                 </p>
@@ -376,7 +466,7 @@ export default function ControleContainersPage() {
               </div>
             ) : null}
 
-            {error ? (
+            {error && !action ? (
               <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
                 {error}
               </div>
@@ -407,6 +497,7 @@ export default function ControleContainersPage() {
                           <p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">
                             Contêiner
                           </p>
+
                           <h2 className="mt-2 text-2xl font-black tracking-wide text-slate-50">
                             {container.numeroContainer}
                           </h2>
@@ -532,10 +623,12 @@ export default function ControleContainersPage() {
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-400">
                   Linha do tempo
                 </p>
+
                 <h2 className="mt-2 text-3xl font-black">
                   {selected.numeroContainer}
                 </h2>
               </div>
+
               <button
                 onClick={() => setDetailsOpen(false)}
                 className="rounded-full border border-white/10 bg-slate-950 px-4 py-2 text-sm font-bold"
@@ -560,11 +653,13 @@ export default function ControleContainersPage() {
                         <p className="font-black text-slate-100">
                           {event.tipoEvento}
                         </p>
+
                         <p className="mt-1 text-sm text-slate-400">
                           {event.statusAnterior || "Início"} →{" "}
                           {event.statusNovo}
                         </p>
                       </div>
+
                       <p className="text-xs text-slate-500">
                         {formatDate(event.criadoEm)}
                       </p>
@@ -577,18 +672,21 @@ export default function ControleContainersPage() {
                           {event.posicaoAnterior || "-"}
                         </span>
                       </p>
+
                       <p className="text-slate-400">
                         Destino:{" "}
                         <span className="font-bold text-slate-200">
                           {event.posicaoNova || "-"}
                         </span>
                       </p>
+
                       <p className="text-slate-400">
                         Usuário:{" "}
                         <span className="font-bold text-slate-200">
                           {event.usuarioNome || "-"}
                         </span>
                       </p>
+
                       <p className="text-slate-400">
                         Motivo:{" "}
                         <span className="font-bold text-slate-200">
@@ -614,17 +712,19 @@ export default function ControleContainersPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur">
           <form
             onSubmit={handleAction}
-            className="w-full max-w-xl rounded-[30px] border border-white/10 bg-slate-900 p-6 shadow-2xl"
+            className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[30px] border border-white/10 bg-slate-900 p-6 shadow-2xl"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-emerald-400">
                   Ação operacional
                 </p>
+
                 <h2 className="mt-2 text-2xl font-black">
                   {selected.numeroContainer}
                 </h2>
               </div>
+
               <button
                 type="button"
                 onClick={() => setAction(null)}
@@ -644,86 +744,170 @@ export default function ControleContainersPage() {
             ) : null}
 
             {action === "move" ? (
-              <div className="mt-6 grid grid-cols-2 gap-3">
-                <label className="col-span-2">
-                  <span className="mb-2 block text-xs font-bold text-slate-400">
-                    Pátio
-                  </span>
-                  <input
-                    value={patio}
-                    onChange={(event) => setPatio(event.target.value)}
-                    placeholder="Ex.: Pátio 2"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
-                  />
-                </label>
+              <div className="mt-6 space-y-4">
+                <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm text-cyan-100">
+                  Selecione o endereço operacional na sequência: Unidade →
+                  Pátio → Quadra → Pilha → Fila → Altura.
+                </div>
 
-                <label>
-                  <span className="mb-2 block text-xs font-bold text-slate-400">
-                    Pilha
-                  </span>
-                  <input
-                    required
-                    value={pilha}
-                    onChange={(event) => setPilha(event.target.value)}
-                    placeholder="03"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
-                  />
-                </label>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Unidade
+                    </span>
 
-                <label>
-                  <span className="mb-2 block text-xs font-bold text-slate-400">
-                    Fila
-                  </span>
-                  <input
-                    required
-                    value={fila}
-                    onChange={(event) => setFila(event.target.value)}
-                    placeholder="05"
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
-                  />
-                </label>
+                    <select
+                      required
+                      value={selectedUnit}
+                      onChange={(event) =>
+                        handleUnitChange(event.target.value)
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    >
+                      <option value="">Selecione</option>
+                      <option>JAV 1</option>
+                      <option>JAV 2</option>
+                    </select>
+                  </label>
 
-                <label>
-                  <span className="mb-2 block text-xs font-bold text-slate-400">
-                    Altura
-                  </span>
-                  <select
-                    value={altura}
-                    onChange={(event) => setAltura(event.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
-                  >
-                    {[1, 2, 3, 4, 5, 6].map((value) => (
-                      <option key={value} value={value}>
-                        {value} de alto
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Pátio
+                    </span>
 
-                <label>
-                  <span className="mb-2 block text-xs font-bold text-slate-400">
-                    Motivo
-                  </span>
-                  <select
-                    value={motivo}
-                    onChange={(event) =>
-                      setMotivo(
-                        event.target.value as MotivoMovimentacaoContainer
-                      )
-                    }
-                    className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
-                  >
-                    <option>Armazenamento inicial</option>
-                    <option>Organização de pátio</option>
-                    <option>Separação para entrega</option>
-                    <option>Separação para coleta</option>
-                    <option>Reposicionamento</option>
-                    <option>Carregamento</option>
-                    <option>Descarregamento</option>
-                    <option>Inspeção</option>
-                    <option>Outro</option>
-                  </select>
-                </label>
+                    <select
+                      required
+                      value={patioId}
+                      onChange={(event) =>
+                        handlePatioChange(event.target.value)
+                      }
+                      disabled={!selectedUnit}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none disabled:opacity-50"
+                    >
+                      <option value="">Selecione</option>
+                      {availablePatios.map((patio) => (
+                        <option key={patio.id} value={patio.id}>
+                          {patio.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="sm:col-span-2">
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Quadra disponível
+                    </span>
+
+                    <select
+                      required
+                      value={quadraId}
+                      onChange={(event) => setQuadraId(event.target.value)}
+                      disabled={!patioId}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none disabled:opacity-50"
+                    >
+                      <option value="">Selecione</option>
+                      {availableQuadras.map((quadra) => (
+                        <option key={quadra.id} value={quadra.id}>
+                          {quadra.nome} — {quadra.livres} vagas livres —{" "}
+                          {quadra.status}
+                        </option>
+                      ))}
+                    </select>
+
+                    {patioId && availableQuadras.length === 0 ? (
+                      <p className="mt-2 text-xs text-rose-300">
+                        Não há quadras disponíveis neste pátio.
+                      </p>
+                    ) : null}
+                  </label>
+
+                  {selectedQuadra ? (
+                    <div className="sm:col-span-2 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-4">
+                      <p className="font-black text-emerald-100">
+                        {selectedQuadra.nome}
+                      </p>
+
+                      <p className="mt-1 text-sm text-emerald-200/75">
+                        Ocupação: {selectedQuadra.ocupacao} de{" "}
+                        {selectedQuadra.capacidadeOperacional} • Livres:{" "}
+                        {selectedQuadra.livres}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Pilha
+                    </span>
+
+                    <input
+                      required
+                      value={pilha}
+                      onChange={(event) => setPilha(event.target.value)}
+                      placeholder="03"
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Fila
+                    </span>
+
+                    <input
+                      required
+                      value={fila}
+                      onChange={(event) => setFila(event.target.value)}
+                      placeholder="05"
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Altura
+                    </span>
+
+                    <select
+                      value={altura}
+                      onChange={(event) => setAltura(event.target.value)}
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    >
+                      {[1, 2, 3, 4, 5, 6].map((value) => (
+                        <option key={value} value={value}>
+                          {value} de alto
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Motivo
+                    </span>
+
+                    <select
+                      value={motivo}
+                      onChange={(event) =>
+                        setMotivo(
+                          event.target
+                            .value as MotivoMovimentacaoContainer,
+                        )
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    >
+                      <option>Armazenamento inicial</option>
+                      <option>Organização de pátio</option>
+                      <option>Separação para entrega</option>
+                      <option>Separação para coleta</option>
+                      <option>Reposicionamento</option>
+                      <option>Carregamento</option>
+                      <option>Descarregamento</option>
+                      <option>Inspeção</option>
+                      <option>Outro</option>
+                    </select>
+                  </label>
+                </div>
               </div>
             ) : null}
 
@@ -733,11 +917,13 @@ export default function ControleContainersPage() {
                   <span className="mb-2 block text-xs font-bold text-slate-400">
                     Motivo da programação
                   </span>
+
                   <select
                     value={motivo}
                     onChange={(event) =>
                       setMotivo(
-                        event.target.value as MotivoMovimentacaoContainer
+                        event.target
+                          .value as MotivoMovimentacaoContainer,
                       )
                     }
                     className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
@@ -757,6 +943,7 @@ export default function ControleContainersPage() {
                   <span className="mb-2 block text-xs font-bold text-slate-400">
                     Veículo dentro da unidade
                   </span>
+
                   <select
                     required
                     value={movementId}
@@ -777,11 +964,12 @@ export default function ControleContainersPage() {
                   <span className="mb-2 block text-xs font-bold text-slate-400">
                     Condição de saída
                   </span>
+
                   <select
                     value={conditionOut}
                     onChange={(event) =>
                       setConditionOut(
-                        event.target.value as CondicaoContainer
+                        event.target.value as CondicaoContainer,
                       )
                     }
                     className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
@@ -798,6 +986,7 @@ export default function ControleContainersPage() {
               <span className="mb-2 block text-xs font-bold text-slate-400">
                 Observação
               </span>
+
               <textarea
                 value={observacao}
                 onChange={(event) => setObservacao(event.target.value)}
