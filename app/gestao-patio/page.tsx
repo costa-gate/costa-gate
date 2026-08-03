@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { supabase } from "@/lib/supabase";
 import {
   getContainerTimeline,
   moveContainerToStack,
@@ -12,6 +13,7 @@ import type {
   Unidade,
 } from "@/types";
 import {
+  atualizarQuadra,
   buscarContainersAtivos,
   listarContainersPorQuadra,
   listarPatios,
@@ -30,6 +32,29 @@ type Slot = {
   altura: number;
   container: ContainerDaQuadra | null;
 };
+
+type ReservaDaQuadra = {
+  id: string;
+  numeroContainer: string;
+  unidade: string;
+  cliente?: string | null;
+  armador?: string | null;
+  condicao?: string | null;
+  status: string;
+  placaAtual?: string | null;
+  entradaEm?: string | null;
+  quadraReservadaId: string;
+  patioReservado?: string | null;
+  quadraReservada?: string | null;
+  pilhaReservada: string;
+  filaReservada: string;
+  alturaReservada: number;
+  posicaoReservada: string;
+  reservadoEm?: string | null;
+  observacaoReserva?: string | null;
+};
+
+type DatabaseRow = Record<string, unknown>;
 
 const statusClasses: Record<StatusQuadra, string> = {
   Operando: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
@@ -118,6 +143,78 @@ const getContainerShortName = (numero: string) => {
   return `${normalized.slice(0, 4)}…${normalized.slice(-3)}`;
 };
 
+const normalizeOptionalText = (value: unknown) =>
+  value === null || value === undefined || value === ""
+    ? null
+    : String(value);
+
+const normalizeReserva = (row: DatabaseRow): ReservaDaQuadra => ({
+  id: String(row.id ?? ""),
+  numeroContainer: String(row.numero_container ?? ""),
+  unidade: String(row.unidade ?? ""),
+  cliente: normalizeOptionalText(row.cliente),
+  armador: normalizeOptionalText(row.armador),
+  condicao: normalizeOptionalText(row.condicao),
+  status: String(row.status ?? ""),
+  placaAtual: normalizeOptionalText(row.placa_atual),
+  entradaEm: normalizeOptionalText(row.entrada_em),
+  quadraReservadaId: String(row.quadra_reservada_id ?? ""),
+  patioReservado: normalizeOptionalText(row.patio_reservado),
+  quadraReservada: normalizeOptionalText(row.quadra_reservada),
+  pilhaReservada: String(row.pilha_reservada ?? ""),
+  filaReservada: String(row.fila_reservada ?? ""),
+  alturaReservada: Number(row.altura_reservada ?? 0),
+  posicaoReservada: String(row.posicao_reservada ?? ""),
+  reservadoEm: normalizeOptionalText(row.reservado_em),
+  observacaoReserva: normalizeOptionalText(row.observacao_reserva),
+});
+
+const minutosDesde = (value?: string | null) => {
+  if (!value) return 0;
+
+  const start = new Date(value).getTime();
+
+  if (Number.isNaN(start)) return 0;
+
+  return Math.max(0, Math.floor((Date.now() - start) / 60_000));
+};
+
+
+const toDatetimeLocal = (value?: string | null) => {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset();
+  return new Date(date.getTime() - offset * 60_000)
+    .toISOString()
+    .slice(0, 16);
+};
+
+const fromDatetimeLocal = (value: string) =>
+  value ? new Date(value).toISOString() : null;
+
+type EditQuadraForm = {
+  capacidadeOperacional: string;
+  status: StatusQuadra;
+  permiteArmazenamento: boolean;
+  motivoRestricao: string;
+  inicioRestricao: string;
+  previsaoLiberacao: string;
+  observacoes: string;
+};
+
+const buildEditQuadraForm = (
+  quadra: QuadraTerminal,
+): EditQuadraForm => ({
+  capacidadeOperacional: String(quadra.capacidadeOperacional),
+  status: quadra.status,
+  permiteArmazenamento: quadra.permiteArmazenamento,
+  motivoRestricao: quadra.motivoRestricao ?? "",
+  inicioRestricao: toDatetimeLocal(quadra.inicioRestricao),
+  previsaoLiberacao: toDatetimeLocal(quadra.previsaoLiberacao),
+  observacoes: quadra.observacoes ?? "",
+});
+
 export default function GestaoPatioPage() {
   const [patios, setPatios] = useState<PatioTerminal[]>([]);
   const [quadras, setQuadras] = useState<QuadraTerminal[]>([]);
@@ -125,7 +222,17 @@ export default function GestaoPatioPage() {
   const [selectedQuadra, setSelectedQuadra] =
     useState<QuadraTerminal | null>(null);
 
+  const [editingQuadra, setEditingQuadra] =
+    useState<QuadraTerminal | null>(null);
+  const [quadraForm, setQuadraForm] =
+    useState<EditQuadraForm | null>(null);
+  const [savingQuadra, setSavingQuadra] = useState(false);
+  const [quadraEditError, setQuadraEditError] = useState("");
+
   const [containers, setContainers] = useState<ContainerDaQuadra[]>([]);
+  const [reservas, setReservas] = useState<ReservaDaQuadra[]>([]);
+  const [selectedReserva, setSelectedReserva] =
+    useState<ReservaDaQuadra | null>(null);
   const [selectedContainer, setSelectedContainer] =
     useState<ContainerDaQuadra | null>(null);
 
@@ -196,6 +303,48 @@ export default function GestaoPatioPage() {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!selectedQuadra) return;
+
+    const refreshSelectedQuadra = async () => {
+      try {
+        const [containerData, reservationData] = await Promise.all([
+          listarContainersPorQuadra(selectedQuadra.id),
+          listarReservasPorQuadra(selectedQuadra.id),
+        ]);
+
+        setContainers(containerData);
+        setReservas(reservationData);
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Não foi possível atualizar a quadra em tempo real.",
+        );
+      }
+    };
+
+    const channel = supabase.channel(
+      `gestao-patio-reservas-${selectedQuadra.id}`,
+    );
+
+    channel.on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "containers_terminal",
+      },
+      refreshSelectedQuadra,
+    );
+
+    channel.subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedQuadra?.id]);
 
   const totals = useMemo(() => {
     const capacidadeOriginal = quadras.reduce(
@@ -284,11 +433,53 @@ export default function GestaoPatioPage() {
     [patios, filteredQuadras],
   );
 
+  const listarReservasPorQuadra = async (
+    quadraId: string,
+  ): Promise<ReservaDaQuadra[]> => {
+    const { data, error: reservationError } = await supabase
+      .from("containers_terminal")
+      .select(`
+        id,
+        numero_container,
+        unidade,
+        cliente,
+        armador,
+        condicao,
+        status,
+        placa_atual,
+        entrada_em,
+        quadra_reservada_id,
+        patio_reservado,
+        quadra_reservada,
+        pilha_reservada,
+        fila_reservada,
+        altura_reservada,
+        posicao_reservada,
+        reservado_em,
+        observacao_reserva
+      `)
+      .eq("quadra_reservada_id", quadraId)
+      .neq("status", "Saiu")
+      .is("quadra_id", null)
+      .not("posicao_reservada", "is", null)
+      .order("reservado_em", { ascending: true });
+
+    if (reservationError) {
+      throw new Error(reservationError.message);
+    }
+
+    return (data ?? []).map((row) =>
+      normalizeReserva(row as DatabaseRow),
+    );
+  };
+
   const openQuadra = async (quadra: QuadraTerminal) => {
     try {
       setSelectedQuadra(quadra);
       setLoadingContainers(true);
       setContainers([]);
+      setReservas([]);
+      setSelectedReserva(null);
       setSelectedContainer(null);
       setMovingContainer(null);
       setTargetSlot(null);
@@ -301,9 +492,13 @@ export default function GestaoPatioPage() {
       setViewMode("mapa");
       setError("");
 
-      const data = await listarContainersPorQuadra(quadra.id);
+      const [data, reservationData] = await Promise.all([
+        listarContainersPorQuadra(quadra.id),
+        listarReservasPorQuadra(quadra.id),
+      ]);
 
       setContainers(data);
+      setReservas(reservationData);
 
       const greatestPilha = Math.max(
         1,
@@ -413,6 +608,26 @@ export default function GestaoPatioPage() {
 
     return map;
   }, [containers]);
+
+  const reservaBySlot = useMemo(() => {
+    const map = new Map<string, ReservaDaQuadra>();
+
+    for (const reserva of reservas) {
+      const pilha = numberFromPositionPart(
+        reserva.pilhaReservada,
+      );
+      const fila = numberFromPositionPart(
+        reserva.filaReservada,
+      );
+      const altura = Number(reserva.alturaReservada ?? 0);
+
+      if (!pilha || !fila || !altura) continue;
+
+      map.set(getSlotKey(pilha, fila, altura), reserva);
+    }
+
+    return map;
+  }, [reservas]);
 
   const slotsDaPilha = useMemo<Slot[]>(() => {
     const slots: Slot[] = [];
@@ -550,6 +765,153 @@ export default function GestaoPatioPage() {
       ).length,
     [containers, selectedPilha],
   );
+
+  const reservedInSelectedPilha = useMemo(
+    () =>
+      reservas.filter(
+        (reserva) =>
+          numberFromPositionPart(
+            reserva.pilhaReservada,
+          ) === selectedPilha,
+      ).length,
+    [reservas, selectedPilha],
+  );
+
+
+  const openQuadraStatus = (quadra: QuadraTerminal) => {
+    setEditingQuadra(quadra);
+    setQuadraForm(buildEditQuadraForm(quadra));
+    setQuadraEditError("");
+  };
+
+  const closeQuadraStatus = () => {
+    if (savingQuadra) return;
+    setEditingQuadra(null);
+    setQuadraForm(null);
+    setQuadraEditError("");
+  };
+
+  const updateQuadraForm = <K extends keyof EditQuadraForm>(
+    field: K,
+    value: EditQuadraForm[K],
+  ) => {
+    setQuadraForm((current) =>
+      current ? { ...current, [field]: value } : current,
+    );
+  };
+
+  const handleQuadraStatusChange = (status: StatusQuadra) => {
+    if (!editingQuadra || !quadraForm) return;
+
+    const unavailable =
+      status === "Em Manutenção" ||
+      status === "Bloqueada" ||
+      status === "Inativa";
+
+    setQuadraForm({
+      ...quadraForm,
+      status,
+      permiteArmazenamento: unavailable
+        ? false
+        : status === "Operando"
+          ? true
+          : quadraForm.permiteArmazenamento,
+      capacidadeOperacional: unavailable
+        ? "0"
+        : status === "Operando"
+          ? editingQuadra.capacidadeOriginal > 0
+            ? String(editingQuadra.capacidadeOriginal)
+            : editingQuadra.capacidadeOperacional > 0
+              ? String(editingQuadra.capacidadeOperacional)
+              : ""
+          : quadraForm.capacidadeOperacional,
+      motivoRestricao:
+        status === "Operando" ? "" : quadraForm.motivoRestricao,
+      inicioRestricao:
+        status === "Operando"
+          ? ""
+          : quadraForm.inicioRestricao ||
+            toDatetimeLocal(new Date().toISOString()),
+      previsaoLiberacao:
+        status === "Operando" ? "" : quadraForm.previsaoLiberacao,
+    });
+  };
+
+  const saveQuadraStatus = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!editingQuadra || !quadraForm) return;
+
+    try {
+      setSavingQuadra(true);
+      setQuadraEditError("");
+
+      const capacidadeOperacional = Number(
+        quadraForm.capacidadeOperacional,
+      );
+
+      if (!Number.isFinite(capacidadeOperacional)) {
+        throw new Error("Informe uma capacidade operacional válida.");
+      }
+
+      if (
+        quadraForm.status === "Operando" &&
+        capacidadeOperacional <= 0
+      ) {
+        throw new Error(
+          "A capacidade original desta quadra está zerada. Informe manualmente a capacidade correta antes de liberar.",
+        );
+      }
+
+      if (
+        quadraForm.status !== "Operando" &&
+        !quadraForm.motivoRestricao.trim()
+      ) {
+        throw new Error(
+          "Informe o motivo da restrição, manutenção ou bloqueio.",
+        );
+      }
+
+      await atualizarQuadra({
+        quadraId: editingQuadra.id,
+        capacidadeOperacional,
+        status: quadraForm.status,
+        permiteArmazenamento:
+          quadraForm.permiteArmazenamento,
+        motivoRestricao:
+          quadraForm.motivoRestricao.trim() || null,
+        inicioRestricao: fromDatetimeLocal(
+          quadraForm.inicioRestricao,
+        ),
+        previsaoLiberacao: fromDatetimeLocal(
+          quadraForm.previsaoLiberacao,
+        ),
+        observacoes:
+          quadraForm.observacoes.trim() || null,
+      });
+
+      const updatedQuadras = await listarQuadras();
+      setQuadras(updatedQuadras);
+
+      const updatedSelected = updatedQuadras.find(
+        (item) => item.id === editingQuadra.id,
+      );
+
+      if (updatedSelected) {
+        setSelectedQuadra(updatedSelected);
+      }
+
+      setEditingQuadra(null);
+      setQuadraForm(null);
+    } catch (err) {
+      setQuadraEditError(
+        err instanceof Error
+          ? err.message
+          : "Não foi possível atualizar a quadra.",
+      );
+    } finally {
+      setSavingQuadra(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.16),_transparent_28%),radial-gradient(circle_at_bottom_right,_rgba(14,165,233,0.12),_transparent_26%),#020617] text-slate-100">
@@ -915,6 +1277,14 @@ export default function GestaoPatioPage() {
               <div className="flex flex-wrap gap-2">
                 <button
                   type="button"
+                  onClick={() => openQuadraStatus(selectedQuadra)}
+                  className="rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-2 text-sm font-black text-amber-200 transition hover:bg-amber-500/20"
+                >
+                  Alterar status
+                </button>
+
+                <button
+                  type="button"
                   onClick={() =>
                     setViewMode("mapa")
                   }
@@ -943,9 +1313,11 @@ export default function GestaoPatioPage() {
 
                 <button
                   type="button"
-                  onClick={() =>
-                    setSelectedQuadra(null)
-                  }
+                  onClick={() => {
+                    setSelectedQuadra(null);
+                    setReservas([]);
+                    setSelectedReserva(null);
+                  }}
                   className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-2 text-sm font-bold"
                 >
                   Fechar
@@ -953,11 +1325,15 @@ export default function GestaoPatioPage() {
               </div>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
               {[
                 [
                   "Ocupados",
                   selectedQuadra.ocupacao,
+                ],
+                [
+                  "Reservados",
+                  reservas.length,
                 ],
                 [
                   "Capacidade",
@@ -1098,6 +1474,14 @@ export default function GestaoPatioPage() {
                                 ) === pilha,
                             ).length;
 
+                          const reservedCount =
+                            reservas.filter(
+                              (reserva) =>
+                                numberFromPositionPart(
+                                  reserva.pilhaReservada,
+                                ) === pilha,
+                            ).length;
+
                           return (
                             <button
                               type="button"
@@ -1118,7 +1502,7 @@ export default function GestaoPatioPage() {
                                 pilha,
                               ).padStart(2, "0")}
                               <span className="mt-1 block text-[10px] font-bold opacity-70">
-                                {count} un.
+                                {count} oc. • {reservedCount} res.
                               </span>
                             </button>
                           );
@@ -1167,6 +1551,11 @@ export default function GestaoPatioPage() {
                       </div>
 
                       <div className="flex items-center gap-2 text-slate-300">
+                        <span className="h-3 w-3 rounded bg-amber-400" />
+                        Posição reservada
+                      </div>
+
+                      <div className="flex items-center gap-2 text-slate-300">
                         <span className="h-3 w-3 rounded bg-rose-500" />
                         Posição ocupada
                       </div>
@@ -1197,7 +1586,11 @@ export default function GestaoPatioPage() {
                         <strong>
                           {occupiedInSelectedPilha}
                         </strong>{" "}
-                        posição(ões) ocupada(s)
+                        ocupada(s) •{" "}
+                        <strong className="text-amber-200">
+                          {reservedInSelectedPilha}
+                        </strong>{" "}
+                        reservada(s)
                       </div>
                     </div>
 
@@ -1253,6 +1646,15 @@ export default function GestaoPatioPage() {
                               const occupied =
                                 slot.container;
 
+                              const reserved =
+                                reservaBySlot.get(
+                                  getSlotKey(
+                                    slot.pilha,
+                                    slot.fila,
+                                    slot.altura,
+                                  ),
+                                ) ?? null;
+
                               const scheduled =
                                 occupied?.status ===
                                 "Programado para Saída";
@@ -1271,6 +1673,11 @@ export default function GestaoPatioPage() {
                                       return;
                                     }
 
+                                    if (reserved) {
+                                      setSelectedReserva(reserved);
+                                      return;
+                                    }
+
                                     if (movingContainer) {
                                       setTargetSlot(slot);
                                       setMoveError("");
@@ -1281,14 +1688,16 @@ export default function GestaoPatioPage() {
                                       ? scheduled
                                         ? "border-orange-400/40 bg-orange-500/15 hover:bg-orange-500/25"
                                         : "border-rose-400/40 bg-rose-500/15 hover:bg-rose-500/25"
-                                      : targetSlot &&
-                                          targetSlot.pilha === slot.pilha &&
-                                          targetSlot.fila === slot.fila &&
-                                          targetSlot.altura === slot.altura
-                                        ? "border-cyan-300 bg-cyan-500/25 ring-2 ring-cyan-300/50"
-                                        : movingContainer
-                                          ? "cursor-pointer border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20"
-                                          : "border-emerald-400/20 bg-emerald-500/5 hover:bg-emerald-500/10"
+                                      : reserved
+                                        ? "border-amber-300/50 bg-amber-500/15 hover:bg-amber-500/25"
+                                        : targetSlot &&
+                                            targetSlot.pilha === slot.pilha &&
+                                            targetSlot.fila === slot.fila &&
+                                            targetSlot.altura === slot.altura
+                                          ? "border-cyan-300 bg-cyan-500/25 ring-2 ring-cyan-300/50"
+                                          : movingContainer
+                                            ? "cursor-pointer border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20"
+                                            : "border-emerald-400/20 bg-emerald-500/5 hover:bg-emerald-500/10"
                                   }`}
                                 >
                                   <p className="text-[10px] font-black uppercase tracking-[0.12em] text-slate-500">
@@ -1326,6 +1735,28 @@ export default function GestaoPatioPage() {
                                       <p className="mt-1 truncate text-[11px] text-slate-400">
                                         {occupied.cliente ||
                                           "Sem cliente"}
+                                      </p>
+                                    </>
+                                  ) : reserved ? (
+                                    <>
+                                      <div className="mt-2 flex items-center justify-between gap-2">
+                                        <p className="text-sm font-black text-amber-100">
+                                          {getContainerShortName(
+                                            reserved.numeroContainer,
+                                          )}
+                                        </p>
+
+                                        <span className="rounded-full border border-amber-300/30 bg-amber-500/15 px-2 py-1 text-[9px] font-black uppercase text-amber-100">
+                                          Reservado
+                                        </span>
+                                      </div>
+
+                                      <p className="mt-1 truncate text-[11px] text-amber-100/70">
+                                        {reserved.cliente ||
+                                          "Sem cliente"} •{" "}
+                                        {minutosDesde(
+                                          reserved.reservadoEm,
+                                        )} min
                                       </p>
                                     </>
                                   ) : (
@@ -1443,11 +1874,301 @@ export default function GestaoPatioPage() {
                         </div>
                       </button>
                     ))}
+
+                    {reservas.map((reserva) => (
+                      <button
+                        type="button"
+                        key={`reserva-${reserva.id}`}
+                        onClick={() =>
+                          setSelectedReserva(reserva)
+                        }
+                        className="rounded-[24px] border border-amber-400/30 bg-amber-500/10 p-5 text-left transition hover:bg-amber-500/15"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.14em] text-amber-200/70">
+                              Reserva operacional
+                            </p>
+
+                            <h3 className="mt-1 text-xl font-black">
+                              {reserva.numeroContainer}
+                            </h3>
+                          </div>
+
+                          <span className="rounded-full border border-amber-300/30 bg-amber-500/15 px-3 py-1 text-xs font-bold text-amber-100">
+                            Aguardando operador
+                          </span>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                          <div className="rounded-xl bg-slate-900/80 p-3">
+                            <p className="text-xs text-slate-500">
+                              Posição reservada
+                            </p>
+
+                            <p className="mt-1 font-black text-amber-200">
+                              {reserva.posicaoReservada}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl bg-slate-900/80 p-3">
+                            <p className="text-xs text-slate-500">
+                              Tempo de reserva
+                            </p>
+
+                            <p className="mt-1 font-bold">
+                              {minutosDesde(reserva.reservadoEm)} min
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl bg-slate-900/80 p-3">
+                            <p className="text-xs text-slate-500">
+                              Cliente
+                            </p>
+
+                            <p className="mt-1 truncate font-bold">
+                              {reserva.cliente || "-"}
+                            </p>
+                          </div>
+
+                          <div className="rounded-xl bg-slate-900/80 p-3">
+                            <p className="text-xs text-slate-500">
+                              Armador
+                            </p>
+
+                            <p className="mt-1 truncate font-bold">
+                              {reserva.armador || "-"}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
             ) : null}
           </div>
+        </div>
+      ) : null}
+
+
+      {editingQuadra && quadraForm ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/85 p-4 backdrop-blur">
+          <form
+            onSubmit={saveQuadraStatus}
+            className="max-h-[94vh] w-full max-w-2xl overflow-y-auto rounded-[30px] border border-amber-400/25 bg-slate-900 p-6 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-300">
+                  Configuração operacional
+                </p>
+                <h3 className="mt-2 text-3xl font-black">
+                  {editingQuadra.nome}
+                </h3>
+                <p className="mt-1 text-sm text-slate-400">
+                  {editingQuadra.patioNome} • {editingQuadra.unidade}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={closeQuadraStatus}
+                disabled={savingQuadra}
+                className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-2 text-sm font-bold disabled:opacity-50"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              <label>
+                <span className="mb-2 block text-xs font-bold text-slate-400">
+                  Status da quadra
+                </span>
+                <select
+                  value={quadraForm.status}
+                  onChange={(event) =>
+                    handleQuadraStatusChange(
+                      event.target.value as StatusQuadra,
+                    )
+                  }
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                >
+                  <option>Operando</option>
+                  <option>Operação Restrita</option>
+                  <option>Em Manutenção</option>
+                  <option>Bloqueada</option>
+                  <option>Inativa</option>
+                </select>
+              </label>
+
+              <label>
+                <span className="mb-2 block text-xs font-bold text-slate-400">
+                  Capacidade operacional
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={editingQuadra.capacidadeOriginal}
+                  value={quadraForm.capacidadeOperacional}
+                  onChange={(event) =>
+                    updateQuadraForm(
+                      "capacidadeOperacional",
+                      event.target.value,
+                    )
+                  }
+                  disabled={
+                    quadraForm.status === "Em Manutenção" ||
+                    quadraForm.status === "Bloqueada" ||
+                    quadraForm.status === "Inativa"
+                  }
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none disabled:opacity-50"
+                />
+                <p className="mt-2 text-xs text-slate-500">
+                  Original: {editingQuadra.capacidadeOriginal} • Ocupados: {editingQuadra.ocupacao}
+                </p>
+
+                {quadraForm.status === "Operando" &&
+                editingQuadra.capacidadeOriginal <= 0 ? (
+                  <div className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-200">
+                    A capacidade original desta quadra está zerada no banco.
+                    Informe manualmente a capacidade correta para liberar a operação.
+                  </div>
+                ) : null}
+              </label>
+
+              <label className="sm:col-span-2">
+                <span className="mb-2 block text-xs font-bold text-slate-400">
+                  Armazenamento
+                </span>
+                <select
+                  value={
+                    quadraForm.permiteArmazenamento
+                      ? "Permitido"
+                      : "Bloqueado"
+                  }
+                  onChange={(event) =>
+                    updateQuadraForm(
+                      "permiteArmazenamento",
+                      event.target.value === "Permitido",
+                    )
+                  }
+                  disabled={
+                    quadraForm.status === "Em Manutenção" ||
+                    quadraForm.status === "Bloqueada" ||
+                    quadraForm.status === "Inativa"
+                  }
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none disabled:opacity-50"
+                >
+                  <option>Permitido</option>
+                  <option>Bloqueado</option>
+                </select>
+              </label>
+
+              {quadraForm.status !== "Operando" ? (
+                <>
+                  <label className="sm:col-span-2">
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Motivo da restrição *
+                    </span>
+                    <input
+                      value={quadraForm.motivoRestricao}
+                      onChange={(event) =>
+                        updateQuadraForm(
+                          "motivoRestricao",
+                          event.target.value,
+                        )
+                      }
+                      placeholder="Ex.: manutenção, interdição ou capacidade parcial"
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Início da restrição
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={quadraForm.inicioRestricao}
+                      onChange={(event) =>
+                        updateQuadraForm(
+                          "inicioRestricao",
+                          event.target.value,
+                        )
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    />
+                  </label>
+
+                  <label>
+                    <span className="mb-2 block text-xs font-bold text-slate-400">
+                      Previsão de liberação
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={quadraForm.previsaoLiberacao}
+                      onChange={(event) =>
+                        updateQuadraForm(
+                          "previsaoLiberacao",
+                          event.target.value,
+                        )
+                      }
+                      className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                    />
+                  </label>
+                </>
+              ) : null}
+
+              <label className="sm:col-span-2">
+                <span className="mb-2 block text-xs font-bold text-slate-400">
+                  Observações
+                </span>
+                <textarea
+                  rows={3}
+                  value={quadraForm.observacoes}
+                  onChange={(event) =>
+                    updateQuadraForm(
+                      "observacoes",
+                      event.target.value,
+                    )
+                  }
+                  placeholder="Opcional"
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 outline-none"
+                />
+              </label>
+            </div>
+
+            {quadraEditError ? (
+              <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-500/10 p-4 text-sm text-rose-200">
+                {quadraEditError}
+              </div>
+            ) : null}
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={closeQuadraStatus}
+                disabled={savingQuadra}
+                className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 font-bold disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="submit"
+                disabled={savingQuadra}
+                className="rounded-2xl bg-emerald-500 px-4 py-3 font-black text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50"
+              >
+                {savingQuadra
+                  ? "Salvando..."
+                  : quadraForm.status === "Operando"
+                    ? "Liberar quadra"
+                    : "Salvar configuração"}
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
 
@@ -1664,6 +2385,96 @@ export default function GestaoPatioPage() {
                   ))}
               </div>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedReserva ? (
+        <div className="fixed inset-0 z-[62] flex items-center justify-center bg-black/85 p-4 backdrop-blur">
+          <div className="w-full max-w-xl rounded-[28px] border border-amber-400/30 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-amber-300">
+                  Posição reservada
+                </p>
+
+                <h3 className="mt-2 text-3xl font-black">
+                  {selectedReserva.numeroContainer}
+                </h3>
+
+                <p className="mt-1 text-sm text-slate-400">
+                  Aguardando confirmação física do operador
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedReserva(null)}
+                className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-2 text-sm font-bold"
+              >
+                Fechar
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-amber-400/25 bg-amber-500/10 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.14em] text-amber-200">
+                Destino protegido
+              </p>
+
+              <p className="mt-2 text-3xl font-black text-amber-100">
+                {selectedReserva.posicaoReservada}
+              </p>
+
+              <p className="mt-2 text-sm text-slate-400">
+                {selectedReserva.unidade} •{" "}
+                {selectedReserva.patioReservado || "-"} •{" "}
+                {selectedReserva.quadraReservada || "-"}
+              </p>
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              {[
+                ["Cliente", selectedReserva.cliente || "-"],
+                ["Armador", selectedReserva.armador || "-"],
+                ["Condição", selectedReserva.condicao || "-"],
+                ["Placa", selectedReserva.placaAtual || "-"],
+                [
+                  "Reservada há",
+                  `${minutosDesde(selectedReserva.reservadoEm)} min`,
+                ],
+                [
+                  "Reservada em",
+                  formatDate(selectedReserva.reservadoEm),
+                ],
+              ].map(([label, value]) => (
+                <div
+                  key={String(label)}
+                  className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+                >
+                  <p className="text-xs text-slate-500">{label}</p>
+                  <p className="mt-1 font-black text-slate-100">
+                    {value}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            {selectedReserva.observacaoReserva ? (
+              <div className="mt-4 rounded-2xl border border-cyan-400/15 bg-cyan-500/5 p-4">
+                <p className="text-xs text-cyan-200/70">
+                  Instrução ao operador
+                </p>
+
+                <p className="mt-1 text-sm text-cyan-100">
+                  {selectedReserva.observacaoReserva}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="mt-5 rounded-2xl border border-amber-400/20 bg-amber-500/5 p-4 text-sm text-amber-100">
+              Esta posição não pode ser utilizada por outro contêiner
+              enquanto a reserva estiver ativa.
+            </div>
           </div>
         </div>
       ) : null}

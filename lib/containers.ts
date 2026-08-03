@@ -52,6 +52,29 @@ type MovimentarContainerComQuadraInput = MovimentarContainerInput & {
   quadra?: string | null;
 };
 
+export type ReservarPosicaoContainerInput = {
+  containerId: string;
+  unidade: Unidade;
+  patio: string;
+  quadraId: string;
+  quadra: string;
+  pilha: string;
+  fila: string;
+  altura: number;
+  observacao?: string;
+};
+
+export type ConfirmarExecucaoReservaInput = {
+  containerId: string;
+  observacao?: string;
+};
+
+export type CancelarReservaContainerInput = {
+  containerId: string;
+  motivo?: string;
+  observacao?: string;
+};
+
 type RegistrarEventoInput = {
   container: ContainerTerminal;
   movimentoId?: string | null;
@@ -155,7 +178,30 @@ const normalizeContainer = (row: DatabaseRow): ContainerTerminal => ({
   atualizadoPor: normalizeOptionalText(row.atualizado_por),
   criadoEm: normalizeOptionalText(row.criado_em) ?? undefined,
   atualizadoEm: normalizeOptionalText(row.atualizado_em) ?? undefined,
-});
+
+  // Campos de planejamento operacional. O cast mantém compatibilidade
+  // enquanto os tipos centrais são atualizados em uma etapa posterior.
+  quadraReservadaId:
+    normalizeOptionalText(row.quadra_reservada_id) ?? undefined,
+  patioReservado:
+    normalizeOptionalText(row.patio_reservado) ?? undefined,
+  quadraReservada:
+    normalizeOptionalText(row.quadra_reservada) ?? undefined,
+  pilhaReservada:
+    normalizeOptionalText(row.pilha_reservada) ?? undefined,
+  filaReservada:
+    normalizeOptionalText(row.fila_reservada) ?? undefined,
+  alturaReservada:
+    normalizeOptionalNumber(row.altura_reservada) ?? undefined,
+  posicaoReservada:
+    normalizeOptionalText(row.posicao_reservada) ?? undefined,
+  reservadoEm:
+    normalizeOptionalText(row.reservado_em) ?? undefined,
+  reservadoPor:
+    normalizeOptionalText(row.reservado_por) ?? undefined,
+  observacaoReserva:
+    normalizeOptionalText(row.observacao_reserva) ?? undefined,
+} as ContainerTerminal & Record<string, unknown>);
 
 const normalizeEvent = (row: DatabaseRow): EventoContainer => ({
   id: normalizeText(row.id),
@@ -253,6 +299,8 @@ const ensurePositionAvailable = async ({
     );
   }
 };
+
+
 
 const registerContainerEvent = async (
   input: RegistrarEventoInput,
@@ -378,7 +426,28 @@ export const createContainerFromMovement = async (
         armador: input.armador?.trim() || null,
         tipo_container: input.tipoContainer?.trim() || null,
         condicao: input.condicao ?? 'Não Informado',
+
+        // O AGP registra a entrada sem definir endereço físico.
         status: 'Recebido' as StatusContainer,
+        patio: null,
+        quadra_id: null,
+        quadra: null,
+        pilha: null,
+        fila: null,
+        altura: null,
+        posicao: null,
+
+        quadra_reservada_id: null,
+        patio_reservado: null,
+        quadra_reservada: null,
+        pilha_reservada: null,
+        fila_reservada: null,
+        altura_reservada: null,
+        posicao_reservada: null,
+        reservado_em: null,
+        reservado_por: null,
+        observacao_reserva: null,
+
         movimento_entrada_id: input.movimentoEntradaId ?? null,
         movimento_atual_id: input.movimentoEntradaId ?? null,
         placa_entrada: input.placaEntrada?.trim().toUpperCase() || null,
@@ -402,8 +471,11 @@ export const createContainerFromMovement = async (
     statusAnterior: null,
     statusNovo: 'Recebido',
     placaCavalo: input.placaEntrada ?? null,
-    motivo: 'Entrada registrada na portaria',
-    observacao: input.observacoes,
+    motivo:
+      'Entrada registrada pelo AGP e encaminhada para definição de posição',
+    observacao:
+      input.observacoes?.trim() ||
+      'Contêiner aguardando posicionamento pelo conferente.',
   });
 
   return container;
@@ -454,6 +526,308 @@ export const confirmContainerUnmount = async (
     placaCavalo: container.placaAtual ?? container.placaEntrada ?? null,
     motivo: 'Contêiner desmontado do veículo',
     observacao: input.observacao,
+  });
+
+  return updatedContainer;
+};
+
+
+export const reserveContainerPosition = async (
+  input: ReservarPosicaoContainerInput,
+): Promise<ContainerTerminal> => {
+  await ensureAuthenticated();
+
+  const container = await getContainerByIdInternal(input.containerId);
+
+  if (container.status === 'Saiu') {
+    throw new Error(
+      'Não é possível reservar posição para um contêiner que já saiu.',
+    );
+  }
+
+  const quadraSelecionada = await validarQuadraParaArmazenamento(
+    input.quadraId,
+  );
+
+  if (quadraSelecionada.unidade !== input.unidade) {
+    throw new Error(
+      `A quadra selecionada pertence à unidade ${quadraSelecionada.unidade}.`,
+    );
+  }
+
+  const pilha = normalizeSlotPart(input.pilha);
+  const fila = normalizeSlotPart(input.fila);
+  const altura = Number(input.altura);
+
+  if (!pilha || pilha === '00') {
+    throw new Error('Informe uma pilha válida.');
+  }
+
+  if (!fila || fila === '00') {
+    throw new Error('Informe uma fila válida.');
+  }
+
+  if (!Number.isInteger(altura) || altura < 1 || altura > 6) {
+    throw new Error('A altura deve estar entre 1 e 6.');
+  }
+
+  const patio =
+    input.patio?.trim() || quadraSelecionada.patioNome;
+  const quadra =
+    input.quadra?.trim() || quadraSelecionada.nome;
+  const posicaoReservada = buildPatioPosition(
+    pilha,
+    fila,
+    altura,
+  );
+
+  if (!posicaoReservada) {
+    throw new Error('Não foi possível montar a posição reservada.');
+  }
+
+  const { data, error } = await supabase.rpc(
+    'reservar_posicao_container',
+    {
+      p_container_id: container.id,
+      p_unidade: input.unidade,
+      p_patio: patio,
+      p_quadra_id: input.quadraId,
+      p_quadra: quadra,
+      p_pilha: pilha,
+      p_fila: fila,
+      p_altura: altura,
+      p_posicao: posicaoReservada,
+      p_observacao: input.observacao?.trim() || null,
+    },
+  );
+
+  if (error) {
+    const message =
+      error.message ||
+      'Não foi possível reservar a posição selecionada.';
+
+    if (
+      message.toLowerCase().includes('ocupada') ||
+      message.toLowerCase().includes('reservada')
+    ) {
+      throw new Error(message);
+    }
+
+    throw new Error(`Falha ao reservar posição: ${message}`);
+  }
+
+  const returnedRow = Array.isArray(data) ? data[0] : data;
+
+  if (!returnedRow) {
+    throw new Error(
+      'A reserva foi processada, mas o banco não retornou o contêiner atualizado.',
+    );
+  }
+
+  const updatedContainer = normalizeContainer(
+    returnedRow as DatabaseRow,
+  );
+
+  await registerContainerEvent({
+    container: updatedContainer,
+    movimentoId: container.movimentoAtualId ?? null,
+    tipoEvento: 'Movimentação',
+    statusAnterior: container.status,
+    statusNovo: container.status,
+    patioAnterior: container.patio ?? null,
+    pilhaAnterior: container.pilha ?? null,
+    filaAnterior: container.fila ?? null,
+    alturaAnterior: container.altura ?? null,
+    posicaoAnterior: container.posicao ?? null,
+    patioNovo: patio,
+    pilhaNova: pilha,
+    filaNova: fila,
+    alturaNova: altura,
+    posicaoNova: posicaoReservada,
+    motivo: 'Reserva de posição pelo conferente',
+    observacao:
+      input.observacao?.trim() ||
+      `Destino reservado em ${posicaoReservada}. Aguardando execução do operador.`,
+  });
+
+  return updatedContainer;
+};
+
+export const cancelContainerReservation = async (
+  input: CancelarReservaContainerInput,
+): Promise<ContainerTerminal> => {
+  const user = await ensureAuthenticated();
+  const container = await getContainerByIdInternal(input.containerId);
+  const reservation = container as ContainerTerminal &
+    Record<string, unknown>;
+
+  const reservedPosition = normalizeOptionalText(
+    reservation.posicaoReservada,
+  );
+
+  if (!reservedPosition) {
+    throw new Error('Este contêiner não possui uma posição reservada.');
+  }
+
+  const { data, error } = await supabase
+    .from('containers_terminal')
+    .update({
+      quadra_reservada_id: null,
+      patio_reservado: null,
+      quadra_reservada: null,
+      pilha_reservada: null,
+      fila_reservada: null,
+      altura_reservada: null,
+      posicao_reservada: null,
+      reservado_em: null,
+      reservado_por: null,
+      observacao_reserva: null,
+      atualizado_por: user.id,
+    })
+    .eq('id', container.id)
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  const updatedContainer = normalizeContainer(data as DatabaseRow);
+
+  await registerContainerEvent({
+    container: updatedContainer,
+    movimentoId: container.movimentoAtualId ?? null,
+    tipoEvento: 'Movimentação',
+    statusAnterior: container.status,
+    statusNovo: container.status,
+    posicaoAnterior: reservedPosition,
+    motivo: input.motivo ?? 'Reserva cancelada',
+    observacao:
+      input.observacao?.trim() ||
+      'A reserva de posição foi cancelada.',
+  });
+
+  return updatedContainer;
+};
+
+export const confirmReservedContainerExecution = async (
+  input: ConfirmarExecucaoReservaInput,
+): Promise<ContainerTerminal> => {
+  const user = await ensureAuthenticated();
+  const container = await getContainerByIdInternal(input.containerId);
+  const reservation = container as ContainerTerminal &
+    Record<string, unknown>;
+
+  const quadraId = normalizeOptionalText(
+    reservation.quadraReservadaId,
+  );
+  const patio = normalizeOptionalText(
+    reservation.patioReservado,
+  );
+  const quadra = normalizeOptionalText(
+    reservation.quadraReservada,
+  );
+  const pilha = normalizeOptionalText(
+    reservation.pilhaReservada,
+  );
+  const fila = normalizeOptionalText(
+    reservation.filaReservada,
+  );
+  const altura = normalizeOptionalNumber(
+    reservation.alturaReservada,
+  );
+  const posicaoReservada = normalizeOptionalText(
+    reservation.posicaoReservada,
+  );
+
+  if (
+    !quadraId ||
+    !patio ||
+    !quadra ||
+    !pilha ||
+    !fila ||
+    !altura ||
+    !posicaoReservada
+  ) {
+    throw new Error(
+      'O contêiner não possui uma reserva completa para execução.',
+    );
+  }
+
+  const quadraSelecionada = await validarQuadraParaArmazenamento(
+    quadraId,
+  );
+
+  await ensurePositionAvailable({
+    containerId: container.id,
+    quadraId,
+    pilha,
+    fila,
+    altura,
+  });
+
+  const { data, error } = await supabase
+    .from('containers_terminal')
+    .update({
+      unidade: quadraSelecionada.unidade,
+      patio,
+      quadra_id: quadraId,
+      quadra,
+      pilha,
+      fila,
+      altura,
+      posicao: posicaoReservada,
+      status: 'Na Pilha',
+      movimento_atual_id: null,
+      placa_atual: null,
+
+      quadra_reservada_id: null,
+      patio_reservado: null,
+      quadra_reservada: null,
+      pilha_reservada: null,
+      fila_reservada: null,
+      altura_reservada: null,
+      posicao_reservada: null,
+      reservado_em: null,
+      reservado_por: null,
+      observacao_reserva: null,
+
+      atualizado_por: user.id,
+    })
+    .eq('id', container.id)
+    .select()
+    .single();
+
+  if (error) {
+    if (error.code === '23505') {
+      throw new Error(
+        `A posição ${posicaoReservada} foi ocupada por outro contêiner. O conferente deve reservar um novo destino.`,
+      );
+    }
+
+    throw new Error(error.message);
+  }
+
+  const updatedContainer = normalizeContainer(data as DatabaseRow);
+
+  await registerContainerEvent({
+    container: updatedContainer,
+    movimentoId: container.movimentoAtualId ?? null,
+    tipoEvento: 'Armazenamento',
+    statusAnterior: container.status,
+    statusNovo: 'Na Pilha',
+    patioAnterior: container.patio ?? null,
+    pilhaAnterior: container.pilha ?? null,
+    filaAnterior: container.fila ?? null,
+    alturaAnterior: container.altura ?? null,
+    posicaoAnterior: container.posicao ?? null,
+    patioNovo: patio,
+    pilhaNova: pilha,
+    filaNova: fila,
+    alturaNova: altura,
+    posicaoNova: posicaoReservada,
+    motivo: 'Execução confirmada pelo operador',
+    observacao:
+      input.observacao?.trim() ||
+      `Armazenamento executado na posição ${posicaoReservada}.`,
   });
 
   return updatedContainer;
@@ -518,6 +892,18 @@ export const moveContainerToStack = async (
       status: 'Na Pilha',
       movimento_atual_id: null,
       placa_atual: null,
+
+      quadra_reservada_id: null,
+      patio_reservado: null,
+      quadra_reservada: null,
+      pilha_reservada: null,
+      fila_reservada: null,
+      altura_reservada: null,
+      posicao_reservada: null,
+      reservado_em: null,
+      reservado_por: null,
+      observacao_reserva: null,
+
       atualizado_por: user.id,
     })
     .eq('id', container.id)
@@ -645,6 +1031,18 @@ export const mountContainerOnVehicle = async (
       fila: null,
       altura: null,
       posicao: null,
+
+      quadra_reservada_id: null,
+      patio_reservado: null,
+      quadra_reservada: null,
+      pilha_reservada: null,
+      fila_reservada: null,
+      altura_reservada: null,
+      posicao_reservada: null,
+      reservado_em: null,
+      reservado_por: null,
+      observacao_reserva: null,
+
       montado_em: new Date().toISOString(),
       atualizado_por: user.id,
     })

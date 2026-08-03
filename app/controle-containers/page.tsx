@@ -4,13 +4,16 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import {
   confirmContainerUnmount,
-  getActiveContainers,
-  getContainerTimeline,
   mountContainerOnVehicle,
   moveContainerToStack,
   scheduleContainerExit,
-  subscribeToContainers,
 } from "@/lib/containers";
+import {
+  carregarContainerCompleto,
+  listarContainersAtivosUnificados,
+  subscribeToContainerDomain,
+  type ContainerUnifiedView,
+} from "@/lib/container-service";
 import { getActiveMovements } from "@/lib/movements";
 import {
   listarPatios,
@@ -21,7 +24,6 @@ import {
 } from "@/lib/patios";
 import type {
   CondicaoContainer,
-  ContainerTerminal,
   EventoContainer,
   MotivoMovimentacaoContainer,
   VehicleMovement,
@@ -52,7 +54,7 @@ const formatDate = (value?: string | null) => {
   return date.toLocaleString("pt-BR");
 };
 
-const formatPosition = (container: ContainerTerminal) =>
+const formatPosition = (container: ContainerUnifiedView) =>
   container.posicao ||
   [
     container.pilha && `P${container.pilha}`,
@@ -65,7 +67,7 @@ const formatPosition = (container: ContainerTerminal) =>
   "Sem posição";
 
 export default function ControleContainersPage() {
-  const [containers, setContainers] = useState<ContainerTerminal[]>([]);
+  const [containers, setContainers] = useState<ContainerUnifiedView[]>([]);
   const [vehicles, setVehicles] = useState<VehicleMovement[]>([]);
   const [patios, setPatios] = useState<PatioTerminal[]>([]);
   const [quadras, setQuadras] = useState<QuadraTerminal[]>([]);
@@ -75,7 +77,7 @@ export default function ControleContainersPage() {
   const [statusFilter, setStatusFilter] = useState("Todos");
   const [conditionFilter, setConditionFilter] = useState("Todas");
 
-  const [selected, setSelected] = useState<ContainerTerminal | null>(null);
+  const [selected, setSelected] = useState<ContainerUnifiedView | null>(null);
   const [timeline, setTimeline] = useState<EventoContainer[]>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [action, setAction] = useState<ActionType>(null);
@@ -106,7 +108,7 @@ export default function ControleContainersPage() {
 
       const [containerData, vehicleData, patioData, quadraData] =
         await Promise.all([
-          getActiveContainers(),
+          listarContainersAtivosUnificados(),
           getActiveMovements(),
           listarPatios(),
           listarQuadras(),
@@ -131,11 +133,11 @@ export default function ControleContainersPage() {
   useEffect(() => {
     loadData();
 
-    const unsubscribeContainers = subscribeToContainers(loadData);
+    const unsubscribeDomain = subscribeToContainerDomain(loadData);
     const unsubscribePatios = subscribeToPatios(loadData);
 
     return () => {
-      unsubscribeContainers();
+      unsubscribeDomain();
       unsubscribePatios();
     };
   }, []);
@@ -170,6 +172,10 @@ export default function ControleContainersPage() {
         container.placaEntrada,
         container.posicao,
         container.patio,
+        container.operacao,
+        container.destino,
+        container.motorista,
+        container.transportadora,
       ]
         .filter(Boolean)
         .some((value) =>
@@ -226,7 +232,7 @@ export default function ControleContainersPage() {
   );
 
   const openAction = (
-    container: ContainerTerminal,
+    container: ContainerUnifiedView,
     nextAction: ActionType,
   ) => {
     setSelected(container);
@@ -249,15 +255,16 @@ export default function ControleContainersPage() {
     setConditionOut(container.condicao ?? "Não Informado");
   };
 
-  const openDetails = async (container: ContainerTerminal) => {
+  const openDetails = async (container: ContainerUnifiedView) => {
     try {
       setSelected(container);
       setDetailsOpen(true);
       setTimeline([]);
       setError("");
 
-      const history = await getContainerTimeline(container.id);
-      setTimeline(history);
+      const complete = await carregarContainerCompleto(container.id);
+      setSelected(complete.container);
+      setTimeline(complete.timeline);
     } catch (err) {
       setError(
         err instanceof Error
@@ -503,14 +510,20 @@ export default function ControleContainersPage() {
                           </h2>
                         </div>
 
-                        <span
-                          className={`rounded-full border px-3 py-1 text-xs font-bold ${
-                            statusClasses[container.status] ??
-                            "border-white/10 bg-slate-800 text-slate-200"
-                          }`}
-                        >
-                          {container.status}
-                        </span>
+                        <div className="flex flex-col items-end gap-2">
+                          <span
+                            className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                              statusClasses[container.status] ??
+                              "border-white/10 bg-slate-800 text-slate-200"
+                            }`}
+                          >
+                            {container.status}
+                          </span>
+
+                          <span className="rounded-full border border-white/10 bg-slate-900 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                            {container.etapa.replaceAll("_", " ")}
+                          </span>
+                        </div>
                       </div>
 
                       <div className="mt-5 grid grid-cols-2 gap-3">
@@ -566,6 +579,22 @@ export default function ControleContainersPage() {
                         </p>
                       </div>
 
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-3">
+                          <p className="text-xs text-slate-500">Operação</p>
+                          <p className="mt-1 truncate font-bold">
+                            {container.operacao || "-"}
+                          </p>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/5 bg-slate-900/70 p-3">
+                          <p className="text-xs text-slate-500">Destino</p>
+                          <p className="mt-1 truncate font-bold">
+                            {container.destino || "-"}
+                          </p>
+                        </div>
+                      </div>
+
                       <div className="mt-5 grid grid-cols-2 gap-2">
                         <button
                           onClick={() => openDetails(container)}
@@ -576,7 +605,11 @@ export default function ControleContainersPage() {
 
                         <button
                           onClick={() => openAction(container, "move")}
-                          className="rounded-2xl border border-violet-400/20 bg-violet-500/10 px-3 py-3 text-sm font-bold text-violet-200 transition hover:bg-violet-500/20"
+                          disabled={
+                            container.status === "Montado" ||
+                            container.status === "Saiu"
+                          }
+                          className="rounded-2xl border border-violet-400/20 bg-violet-500/10 px-3 py-3 text-sm font-bold text-violet-200 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Movimentar
                         </button>
@@ -585,7 +618,9 @@ export default function ControleContainersPage() {
                           onClick={() => openAction(container, "unmount")}
                           disabled={
                             container.status === "Desmontado" ||
-                            container.status === "Na Pilha"
+                            container.status === "Na Pilha" ||
+                            container.status === "Montado" ||
+                            container.status === "Saiu"
                           }
                           className="rounded-2xl border border-amber-400/20 bg-amber-500/10 px-3 py-3 text-sm font-bold text-amber-200 transition hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                         >
@@ -594,14 +629,22 @@ export default function ControleContainersPage() {
 
                         <button
                           onClick={() => openAction(container, "schedule")}
-                          className="rounded-2xl border border-orange-400/20 bg-orange-500/10 px-3 py-3 text-sm font-bold text-orange-200 transition hover:bg-orange-500/20"
+                          disabled={
+                            container.status === "Montado" ||
+                            container.status === "Saiu"
+                          }
+                          className="rounded-2xl border border-orange-400/20 bg-orange-500/10 px-3 py-3 text-sm font-bold text-orange-200 transition hover:bg-orange-500/20 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Programar
                         </button>
 
                         <button
                           onClick={() => openAction(container, "mount")}
-                          className="col-span-2 rounded-2xl bg-emerald-500 px-3 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-400"
+                          disabled={
+                            container.status === "Montado" ||
+                            container.status === "Saiu"
+                          }
+                          className="col-span-2 rounded-2xl bg-emerald-500 px-3 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Montar em veículo
                         </button>

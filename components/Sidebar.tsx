@@ -4,17 +4,48 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 
-const items = [
-  { label: "Nova Entrada", href: "/nova-entrada" },
-  { label: "Veículos na Unidade", href: "/veiculos-na-unidade" },
-  { label: "Controle de Contêineres", href: "/controle-containers" },
-  { label: "Fila Operacional", href: "/fila-operacional" },
-  { label: "Gestão do Pátio", href: "/gestao-patio" },
-  { label: "Consulta", href: "/consulta" },
-  { label: "Painel Operacional", href: "/painel-operacional" },
-  { label: "Dashboard Gerencial", href: "/dashboard-gerencial" },
-  { label: "Usuários", href: "/usuarios" },
-  { label: "Configurações", href: "/configuracoes" },
+type MenuItem = {
+  label: string;
+  href: string;
+};
+
+type MenuSection = {
+  title: string;
+  items: MenuItem[];
+};
+
+const sections: MenuSection[] = [
+  {
+    title: "Recepção",
+    items: [
+      { label: "Agendamentos", href: "/agendamentos" },
+      { label: "Nova Entrada", href: "/nova-entrada" },
+      { label: "Veículos na Unidade", href: "/veiculos-na-unidade" },
+    ],
+  },
+  {
+    title: "Operação",
+    items: [
+      { label: "Controle de Contêineres", href: "/controle-containers" },
+      { label: "Fila Operacional", href: "/fila-operacional" },
+      { label: "Gestão do Pátio", href: "/gestao-patio" },
+      { label: "Consulta", href: "/consulta" },
+    ],
+  },
+  {
+    title: "Gestão",
+    items: [
+      { label: "Painel Operacional", href: "/painel-operacional" },
+      { label: "Dashboard Gerencial", href: "/dashboard-gerencial" },
+    ],
+  },
+  {
+    title: "Administração",
+    items: [
+      { label: "Usuários", href: "/usuarios" },
+      { label: "Configurações", href: "/configuracoes" },
+    ],
+  },
 ];
 
 const getInitials = (value?: string | null) => {
@@ -62,26 +93,36 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="mt-7 flex-1 space-y-2 overflow-y-auto pr-1">
-        {items.map((item) => {
-          const active =
-            pathname === item.href ||
-            pathname?.startsWith(`${item.href}/`);
+      <nav className="mt-7 flex-1 space-y-5 overflow-y-auto pr-1">
+        {sections.map((section) => (
+          <section key={section.title}>
+            <p className="px-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-600">
+              {section.title}
+            </p>
 
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`block rounded-2xl border px-4 py-3 text-sm font-bold transition ${
-                active
-                  ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-200"
-                  : "border-white/5 bg-slate-900/75 text-slate-200 hover:border-white/10 hover:bg-slate-900"
-              }`}
-            >
-              {item.label}
-            </Link>
-          );
-        })}
+            <div className="mt-2 space-y-2">
+              {section.items.map((item) => {
+                const active =
+                  pathname === item.href ||
+                  pathname?.startsWith(`${item.href}/`);
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`block rounded-2xl border px-4 py-3 text-sm font-bold transition ${
+                      active
+                        ? "border-emerald-400/30 bg-emerald-500/15 text-emerald-200"
+                        : "border-white/5 bg-slate-900/75 text-slate-200 hover:border-white/10 hover:bg-slate-900"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        ))}
       </nav>
 
       <div className="mt-5 border-t border-white/10 pt-4">

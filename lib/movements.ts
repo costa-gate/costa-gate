@@ -24,6 +24,12 @@ type MovementFileField =
 type MovementFileMap = Partial<Record<MovementFileField, File | null>>;
 
 type MovementInput = Omit<Partial<VehicleMovement>, 'id' | 'entrada' | 'status'> & {
+  motivoEntradaSemContainer?: string | null;
+  justificativaEntrada?: string | null;
+  exigeFilaOperacional?: boolean;
+  etapaOperacional?: string | null;
+  containerMontagem?: string | null;
+  instrucaoMontagem?: string | null;
   fotos?: Partial<Record<MovementFileField, string | null>>;
   files?: MovementFileMap;
 };
@@ -117,11 +123,24 @@ const buildPayload = (
   lacre: input.lacre ?? '',
   armador: input.armador ?? '',
   tipo_container: input.tipoContainer ?? '',
-  condicao: input.condicao ?? '',
+  condicao: input.condicao ?? null,
 
   operacao: input.operacao ?? '',
   observacoes: input.observacoes ?? '',
   observacoes_saida: input.observacoesSaida ?? '',
+
+  motivo_entrada_sem_container:
+    input.motivoEntradaSemContainer ?? null,
+  justificativa_entrada:
+    input.justificativaEntrada ?? null,
+  exige_fila_operacional:
+    input.exigeFilaOperacional ?? false,
+  etapa_operacional:
+    input.etapaOperacional ?? null,
+  container_montagem:
+    input.containerMontagem ?? null,
+  instrucao_montagem:
+    input.instrucaoMontagem ?? null,
 
   nome_visitante: input.nomeVisitante ?? '',
   documento_visitante: input.documentoVisitante ?? '',

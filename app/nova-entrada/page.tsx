@@ -67,6 +67,8 @@ type FormValues = {
   observacoes: string;
 
   possuiContainer: boolean;
+  motivoSemContainer: "" | "Montagem de Contêiner" | "Outros";
+  justificativaSemContainer: string;
   numeroContainer: string;
   lacre: string;
   armador: string;
@@ -108,6 +110,8 @@ const initialValues: FormValues = {
   observacoes: "",
 
   possuiContainer: true,
+  motivoSemContainer: "",
+  justificativaSemContainer: "",
   numeroContainer: "",
   lacre: "",
   armador: "",
@@ -270,9 +274,29 @@ export default function NovaEntradaPage() {
       if (!values.transportadora.trim()) {
         nextErrors.transportadora = "Informe a transportadora.";
       }
-      if (!values.cliente.trim()) nextErrors.cliente = "Informe o cliente.";
-      if (!values.operacao.trim()) {
+      if (
+        values.possuiContainer &&
+        !values.cliente.trim()
+      ) {
+        nextErrors.cliente = "Informe o cliente.";
+      }
+      if (values.possuiContainer && !values.operacao.trim()) {
         nextErrors.operacao = "Informe a operação.";
+      }
+
+      if (!values.possuiContainer) {
+        if (!values.motivoSemContainer) {
+          nextErrors.motivoSemContainer =
+            "Informe o motivo da entrada sem contêiner.";
+        }
+
+        if (
+          values.motivoSemContainer === "Outros" &&
+          !values.justificativaSemContainer.trim()
+        ) {
+          nextErrors.justificativaSemContainer =
+            "Justifique o motivo da entrada.";
+        }
       }
 
       if (values.possuiContainer) {
@@ -387,16 +411,44 @@ export default function NovaEntradaPage() {
           isTruck && values.possuiContainer ? values.armador.trim() : "",
         tipoContainer:
           isTruck && values.possuiContainer ? values.tipoContainer : "",
+        // Condição física só existe para entrada com contêiner.
+        // Para visitante, material, veículo leve, prestador e outros,
+        // a propriedade é omitida e o banco grava NULL.
         condicao:
-          isTruck && values.possuiContainer ? values.condicao : "",
+          isTruck && values.possuiContainer ? values.condicao : undefined,
 
         operacao:
-          values.operacao.trim() ||
-          values.motivoVisita.trim() ||
-          values.descricaoMaterial.trim() ||
-          title ||
-          "Acesso",
+          isTruck && !values.possuiContainer
+            ? values.motivoSemContainer === "Montagem de Contêiner"
+              ? "Montagem de Contêiner"
+              : `Outros — ${values.justificativaSemContainer.trim()}`
+            : values.operacao.trim() ||
+              values.motivoVisita.trim() ||
+              values.descricaoMaterial.trim() ||
+              title ||
+              "Acesso",
         observacoes: values.observacoes.trim(),
+
+        motivoEntradaSemContainer:
+          isTruck && !values.possuiContainer
+            ? values.motivoSemContainer
+            : null,
+        justificativaEntrada:
+          isTruck &&
+          !values.possuiContainer &&
+          values.motivoSemContainer === "Outros"
+            ? values.justificativaSemContainer.trim()
+            : null,
+        exigeFilaOperacional:
+          isTruck &&
+          !values.possuiContainer &&
+          values.motivoSemContainer === "Montagem de Contêiner",
+        etapaOperacional:
+          isTruck &&
+          !values.possuiContainer &&
+          values.motivoSemContainer === "Montagem de Contêiner"
+            ? "AGUARDANDO_CONFERENTE"
+            : null,
 
         nomeVisitante: values.nomeVisitante.trim(),
         documentoVisitante: values.documentoVisitante.trim(),
@@ -731,9 +783,17 @@ export default function NovaEntradaPage() {
                         <button
                           key={String(option)}
                           type="button"
-                          onClick={() =>
-                            handleChange("possuiContainer", option)
-                          }
+                          onClick={() => {
+                            handleChange("possuiContainer", option);
+
+                            if (option) {
+                              handleChange("motivoSemContainer", "");
+                              handleChange(
+                                "justificativaSemContainer",
+                                "",
+                              );
+                            }
+                          }}
                           className={`rounded-2xl px-5 py-2 text-sm font-black ${
                             values.possuiContainer === option
                               ? "bg-cyan-300 text-slate-950"
@@ -747,6 +807,99 @@ export default function NovaEntradaPage() {
                   </div>
                 </section>
 
+                {!values.possuiContainer ? (
+                  <section className="mt-6 rounded-3xl border border-amber-400/20 bg-amber-500/5 p-5">
+                    <h2 className="text-xl font-black text-amber-100">
+                      Motivo da entrada sem contêiner
+                    </h2>
+
+                    <p className="mt-1 text-sm text-slate-400">
+                      Montagem entra na Fila Operacional. Outros fica
+                      somente em Veículos na Unidade.
+                    </p>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      {[
+                        {
+                          value: "Montagem de Contêiner" as const,
+                          title: "Montagem de contêiner",
+                          description:
+                            "Conferente orienta e operador executa.",
+                        },
+                        {
+                          value: "Outros" as const,
+                          title: "Outros",
+                          description:
+                            "Estacionamento, espera, apoio ou outra situação.",
+                        },
+                      ].map((option) => {
+                        const active =
+                          values.motivoSemContainer === option.value;
+
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => {
+                              handleChange(
+                                "motivoSemContainer",
+                                option.value,
+                              );
+
+                              if (option.value !== "Outros") {
+                                handleChange(
+                                  "justificativaSemContainer",
+                                  "",
+                                );
+                              }
+                            }}
+                            className={`rounded-2xl border p-4 text-left transition ${
+                              active
+                                ? "border-amber-300/50 bg-amber-500/15"
+                                : "border-white/10 bg-slate-950/60 hover:border-white/20"
+                            }`}
+                          >
+                            <p className="font-black text-slate-100">
+                              {option.title}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              {option.description}
+                            </p>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {errors.motivoSemContainer ? (
+                      <p className="mt-3 text-xs text-rose-400">
+                        {errors.motivoSemContainer}
+                      </p>
+                    ) : null}
+
+                    {values.motivoSemContainer === "Outros" ? (
+                      <Field
+                        label="Justificativa da entrada"
+                        error={errors.justificativaSemContainer}
+                        className="mt-4"
+                      >
+                        <textarea
+                          value={values.justificativaSemContainer}
+                          onChange={(event) =>
+                            handleChange(
+                              "justificativaSemContainer",
+                              event.target.value,
+                            )
+                          }
+                          rows={3}
+                          className={inputClass}
+                          placeholder="Ex.: estacionamento, aguardando programação, veículo reserva..."
+                        />
+                      </Field>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                {values.possuiContainer ? (
                 <section className="mt-6">
                   <h2 className="text-xl font-black">Operação</h2>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -772,6 +925,7 @@ export default function NovaEntradaPage() {
                     </Field>
                   </div>
                 </section>
+                ) : null}
 
                 {values.possuiContainer ? (
                   <section className="mt-6">
